@@ -1096,6 +1096,62 @@ input[type="color"] {
 }
 .stop-del:hover { color: #ff6b6b; }
 
+/* Solid Color Picker Panel */
+.solid-color-box {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 10px;
+  padding: 10px;
+}
+.solid-main-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.solid-main-row input[type="color"] {
+  width: 38px;
+  height: 32px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+.solid-hex-input {
+  flex: 1;
+  height: 32px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  color: #fff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  padding: 0 10px;
+  outline: none;
+}
+.solid-hex-input:focus {
+  border-color: var(--accent);
+}
+.solid-swatches-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 6px;
+}
+.solid-swatch-btn {
+  aspect-ratio: 1;
+  border-radius: 7px;
+  border: 1.5px solid rgba(255, 255, 255, 0.22);
+  cursor: pointer;
+  transition: transform 0.12s ease, border-color 0.12s ease;
+}
+.solid-swatch-btn:hover {
+  transform: scale(1.1);
+}
+.solid-swatch-btn.active {
+  border-color: #fff;
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
 /* Drop Overlay */
 .drop-overlay {
   position: fixed;

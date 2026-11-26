@@ -1,12 +1,12 @@
-import { HIG, traceAppleSquircle, drawHIGGrid } from './squircle.js?v=5';
-import { GRADIENT_PRESETS, VECTOR_GLYPHS } from './presets.js?v=5';
+import { HIG, traceAppleSquircle, drawHIGGrid } from './squircle.js?v=6';
+import { GRADIENT_PRESETS, VECTOR_GLYPHS } from './presets.js?v=6';
 import {
   generateICNSBlob,
   generateIconsetZipBlob,
   generatePNGBlob,
   downsampleCanvas,
   triggerDownload,
-} from './exporters.js?v=5';
+} from './exporters.js?v=6';
 
 // In-memory store for non-serializable image assets keyed by assetId
 const imageAssetStore = new Map();
@@ -1022,8 +1022,129 @@ function renderGlyphPicker() {
   }
 }
 
+const SOLID_SWATCHES = [
+  { name: 'Pure White', color: '#ffffff' },
+  { name: 'Light Gray', color: '#e5e7eb' },
+  { name: 'Dark Slate', color: '#1c1e26' },
+  { name: 'Pure Black', color: '#000000' },
+  { name: 'Apple Blue', color: '#007aff' },
+  { name: 'Sky Cyan', color: '#00c7be' },
+  { name: 'Apple Green', color: '#34c759' },
+  { name: 'Warm Yellow', color: '#ffcc00' },
+  { name: 'Apple Orange', color: '#ff9500' },
+  { name: 'Apple Red', color: '#ff3b30' },
+  { name: 'Apple Pink', color: '#ff2d55' },
+  { name: 'Apple Purple', color: '#af52de' },
+];
+
 function renderStopsList() {
   el.stopsList.innerHTML = '';
+
+  // Dedicated Solid Color UI when background type is 'solid'
+  if (state.background.type === 'solid') {
+    if (!state.background.stops.length) {
+      state.background.stops = [{ color: '#1472ff', pos: 0 }];
+    }
+    const primaryStop = state.background.stops[0];
+
+    const box = document.createElement('div');
+    box.className = 'solid-color-box';
+
+    const mainRow = document.createElement('div');
+    mainRow.className = 'solid-main-row';
+
+    const colorInput = document.createElement('input');
+    colorInput.type = 'color';
+    colorInput.value = primaryStop.color;
+
+    const hexInput = document.createElement('input');
+    hexInput.type = 'text';
+    hexInput.className = 'solid-hex-input';
+    hexInput.value = primaryStop.color;
+    hexInput.maxLength = 7;
+    hexInput.spellcheck = false;
+
+    const applySolidColor = (hex, commit = false) => {
+      primaryStop.color = hex;
+      colorInput.value = hex;
+      hexInput.value = hex;
+      state.activePresetId = null;
+      for (const sb of box.querySelectorAll('.solid-swatch-btn')) {
+        sb.classList.toggle('active', sb.dataset.color.toLowerCase() === hex.toLowerCase());
+      }
+      renderAll();
+      if (commit) {
+        pushHistory();
+        renderPresetsGrid();
+      }
+    };
+
+    colorInput.addEventListener('input', (e) => applySolidColor(e.target.value, false));
+    colorInput.addEventListener('change', (e) => applySolidColor(e.target.value, true));
+
+    hexInput.addEventListener('input', (e) => {
+      let val = e.target.value.trim();
+      if (!val.startsWith('#')) val = `#${val}`;
+      if (/^#[0-9a-fA-F]{6}$/.test(val)) {
+        primaryStop.color = val.toLowerCase();
+        colorInput.value = primaryStop.color;
+        state.activePresetId = null;
+        renderAll();
+      }
+    });
+    hexInput.addEventListener('change', () => {
+      let val = hexInput.value.trim();
+      if (!val.startsWith('#')) val = `#${val}`;
+      if (/^#[0-9a-fA-F]{6}$/.test(val)) {
+        applySolidColor(val.toLowerCase(), true);
+      } else {
+        hexInput.value = primaryStop.color;
+      }
+    });
+
+    mainRow.append(colorInput, hexInput);
+
+    const swatchGrid = document.createElement('div');
+    swatchGrid.className = 'solid-swatches-grid';
+    for (const sw of SOLID_SWATCHES) {
+      const btn = document.createElement('button');
+      btn.className = `solid-swatch-btn ${
+        sw.color.toLowerCase() === primaryStop.color.toLowerCase() ? 'active' : ''
+      }`;
+      btn.style.background = sw.color;
+      btn.dataset.color = sw.color;
+      btn.title = `${sw.name} (${sw.color})`;
+      btn.addEventListener('click', () => applySolidColor(sw.color, true));
+      swatchGrid.appendChild(btn);
+    }
+
+    // Toggle for pure flat color vs glass sheen overlay
+    const flatRow = document.createElement('label');
+    flatRow.className = 'switch-label';
+    const flatCheck = document.createElement('input');
+    flatCheck.type = 'checkbox';
+    flatCheck.checked = state.glass.sheen <= 0.01 && state.glass.innerGlow <= 0.01;
+    flatCheck.addEventListener('change', (e) => {
+      if (e.target.checked) {
+        state.glass.sheen = 0;
+        state.glass.innerGlow = 0;
+      } else {
+        state.glass.sheen = 0.26;
+        state.glass.innerGlow = 0.32;
+      }
+      pushHistory();
+      syncAllUI();
+      renderAll();
+    });
+    const flatText = document.createElement('span');
+    flatText.textContent = 'Pure Flat Color (No Glass Sheen)';
+    flatRow.append(flatCheck, flatText);
+
+    box.append(mainRow, swatchGrid, flatRow);
+    el.stopsList.appendChild(box);
+    return;
+  }
+
   state.background.stops.forEach((stop, idx) => {
     const row = document.createElement('div');
     row.className = 'stop-row';
@@ -1299,11 +1420,17 @@ function syncAllUI() {
   }
 
   // Background
+  const isSolid = state.background.type === 'solid';
   for (const btn of el.bgTypeControl.querySelectorAll('.seg-btn')) {
     btn.classList.toggle('active', btn.dataset.bgtype === state.background.type);
   }
-  const showAngle = state.background.type === 'linear' || state.background.type === 'conic' || state.background.type === 'mesh';
+  const showAngle =
+    state.background.type === 'linear' ||
+    state.background.type === 'conic' ||
+    state.background.type === 'mesh';
   el.bgAngleRow.classList.toggle('hidden', !showAngle);
+  el.addStopBtn.classList.toggle('hidden', isSolid);
+  el.reverseStopsBtn.classList.toggle('hidden', isSolid);
   el.bgAngleSlider.value = state.background.angle ?? 145;
   el.bgAngleVal.textContent = `${state.background.angle ?? 145}°`;
 
@@ -1779,7 +1906,7 @@ function endCanvasDrag(e) {
   activeSnapGuides = { x: false, y: false };
   try {
     if (e && e.pointerId != null) el.overlayCanvas.releasePointerCapture(e.pointerId);
-  } catch (_) {}
+  } catch (_) { }
   pushHistory();
   renderOverlay();
 }
@@ -2304,8 +2431,26 @@ function bindEvents() {
   el.bgTypeControl.addEventListener('click', (e) => {
     const btn = e.target.closest('.seg-btn');
     if (!btn) return;
+    const prevType = state.background.type;
     state.background.type = btn.dataset.bgtype;
     state.activePresetId = null;
+
+    if (state.background.type === 'solid') {
+      // Ensure appearance is 'default' and turn off top gradient sheen so solid color is truly solid
+      if (state.appearance !== 'default') state.appearance = 'default';
+      state._savedGlassBeforeSolid = {
+        sheen: state.glass.sheen,
+        innerGlow: state.glass.innerGlow,
+      };
+      state.glass.sheen = 0;
+      state.glass.innerGlow = 0;
+    } else if (prevType === 'solid' && state._savedGlassBeforeSolid) {
+      if (state.glass.sheen === 0 && state.glass.innerGlow === 0) {
+        state.glass.sheen = state._savedGlassBeforeSolid.sheen ?? 0.3;
+        state.glass.innerGlow = state._savedGlassBeforeSolid.innerGlow ?? 0.36;
+      }
+    }
+
     pushHistory();
     syncAllUI();
     renderAll();
