@@ -8,7 +8,7 @@
   <meta http-equiv="Expires" content="0" />
   <title>Icon Studio — macOS 26 Liquid Glass Icon Maker</title>
   <meta name="description" content="Create modern macOS 26 (Tahoe) Liquid Glass app icons following Apple HIG. Drop images, adjust gradients and specular glass, preview in Dock, and export .icns, .iconset.zip, and PNG." />
-  <link rel="stylesheet" href="styles.css?v=6" />
+  <link rel="stylesheet" href="styles.css?v=7" />
 </head>
 <body>
   <!-- Ambient Tahoe desktop wallpaper backdrop -->
@@ -296,6 +296,11 @@
             <button class="seg-btn" data-view="apps">Apps Grid</button>
             <button class="seg-btn" data-view="sizes">Sizes &amp; Finder</button>
           </div>
+          <div class="stage-zoom-controls" title="Workspace zoom (zoom out for extra room around large images)">
+            <button id="zoomOutBtn" class="mini-pill" title="Zoom workspace out">−</button>
+            <button id="zoomResetBtn" class="mini-pill" title="Reset workspace zoom">100%</button>
+            <button id="zoomInBtn" class="mini-pill" title="Zoom workspace in">+</button>
+          </div>
           <div class="stage-backdrop-pills" id="backdropControl" title="Canvas preview backdrop">
             <button class="dot-pill active" data-backdrop="tahoe" title="Tahoe Wallpaper"></button>
             <button class="dot-pill" data-backdrop="dark" title="Dark Desktop"></button>
@@ -304,13 +309,15 @@
           </div>
         </div>
 
-        <!-- View 1: Interactive 1024x1024 Canvas Editor -->
+        <!-- View 1: Interactive Full-Stage Pasteboard + 1024x1024 Icon Frame -->
         <div id="editorView" class="stage-view active">
-          <div id="canvasFrame" class="canvas-frame backdrop-tahoe">
-            <canvas id="mainCanvas" width="1024" height="1024"></canvas>
-            <canvas id="overlayCanvas" width="1024" height="1024"></canvas>
-            <div id="canvasHint" class="canvas-hint">Drag to move · Scroll to scale · Drop image anywhere</div>
+          <div id="pasteboardWrap" class="pasteboard-wrap">
+            <div id="canvasFrame" class="canvas-frame backdrop-tahoe">
+              <canvas id="mainCanvas" width="1024" height="1024"></canvas>
+            </div>
+            <canvas id="overlayCanvas" width="3072" height="3072"></canvas>
           </div>
+          <div id="canvasHint" class="canvas-hint">Drag corners anywhere in stage to resize · Click outside image to hide box</div>
         </div>
 
         <!-- View 2: macOS 26 Apps Grid Preview -->
@@ -521,6 +528,6 @@
   <!-- Toast Notification -->
   <div id="toast" class="toast hidden" role="status"></div>
 
-  <script type="module" src="js/app.js?v=6"></script>
+  <script type="module" src="js/app.js?v=7"></script>
 </body>
 </html>

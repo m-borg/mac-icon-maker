@@ -1,12 +1,18 @@
-import { HIG, traceAppleSquircle, drawHIGGrid } from './squircle.js?v=6';
-import { GRADIENT_PRESETS, VECTOR_GLYPHS } from './presets.js?v=6';
+import { HIG, traceAppleSquircle, drawHIGGrid } from './squircle.js?v=7';
+import { GRADIENT_PRESETS, VECTOR_GLYPHS } from './presets.js?v=7';
 import {
   generateICNSBlob,
   generateIconsetZipBlob,
   generatePNGBlob,
   downsampleCanvas,
   triggerDownload,
-} from './exporters.js?v=6';
+} from './exporters.js?v=7';
+
+// Pasteboard is 3072x3072 (3x the 1024x1024 icon) with the icon centered at (1024, 1024),
+// giving a full 1024px of open interactive space outside the icon on all 4 sides!
+const PASTEBOARD_SIZE = 3072;
+const PASTEBOARD_OFFSET = 1024;
+let stageZoom = 1.0;
 
 // In-memory store for non-serializable image assets keyed by assetId
 const imageAssetStore = new Map();
@@ -184,7 +190,11 @@ const el = {
   brandMiniCanvas: document.getElementById('brandMiniCanvas'),
   dockUserCanvas: document.getElementById('dockUserCanvas'),
   finderIconCanvas: document.getElementById('finderIconCanvas'),
+  pasteboardWrap: document.getElementById('pasteboardWrap'),
   canvasFrame: document.getElementById('canvasFrame'),
+  zoomOutBtn: document.getElementById('zoomOutBtn'),
+  zoomResetBtn: document.getElementById('zoomResetBtn'),
+  zoomInBtn: document.getElementById('zoomInBtn'),
   iconNameInput: document.getElementById('iconNameInput'),
   undoBtn: document.getElementById('undoBtn'),
   redoBtn: document.getElementById('redoBtn'),
@@ -779,7 +789,12 @@ function getPhotoshopHandles(sw, sh) {
 
 function renderOverlay() {
   const S = HIG.CANVAS_SIZE;
-  overlayCtx.clearRect(0, 0, S, S);
+  overlayCtx.clearRect(0, 0, PASTEBOARD_SIZE, PASTEBOARD_SIZE);
+
+  overlayCtx.save();
+  // Translate so (0, 0)..(1024, 1024) maps to the center 1024x1024 icon frame,
+  // while (-512..-1536) is the surrounding pasteboard!
+  overlayCtx.translate(PASTEBOARD_OFFSET, PASTEBOARD_OFFSET);
 
   if (state.showGrid) {
     drawHIGGrid(overlayCtx, S, {
@@ -809,37 +824,67 @@ function renderOverlay() {
     overlayCtx.restore();
   }
 
-  // Photoshop-style Free Transform box: shown whenever a layer is selected (isTransformActive),
-  // never flickers on mouse hover/leave; hides only when clicking outside the layer or pressing Esc/Enter.
+  // Photoshop-style Free Transform box: shown whenever a layer is selected (isTransformActive)
   const layer = getSelectedLayer();
-  if (!layer || !layer.visible || !isTransformActive) return;
+  if (!layer || !layer.visible || !isTransformActive) {
+    overlayCtx.restore();
+    return;
+  }
 
   const { sw, sh } = getLayerScaledSize(layer);
   const cx = S / 2 + (layer.x || 0);
   const cy = S / 2 + (layer.y || 0);
   const rot = ((layer.rotation || 0) * Math.PI) / 180;
 
+  // Draw a subtle 22% opacity Photoshop/Figma "crop ghost" of the active image outside the 824x824 squircle
+  // so the user can see the whole image when scaling it larger than the icon!
+  if (layer.type === 'image') {
+    const imgCanvas = getProcessedImageCanvas(layer);
+    if (imgCanvas) {
+      overlayCtx.save();
+      overlayCtx.beginPath();
+      overlayCtx.rect(-PASTEBOARD_OFFSET, -PASTEBOARD_OFFSET, PASTEBOARD_SIZE, PASTEBOARD_SIZE);
+      traceAppleSquircle(
+        overlayCtx,
+        HIG.MARGIN,
+        HIG.MARGIN,
+        HIG.SQUIRCLE_SIZE,
+        HIG.SQUIRCLE_SIZE,
+        state.hig.cornerRadius,
+        state.hig.smoothing
+      );
+      overlayCtx.clip('evenodd');
+
+      overlayCtx.globalAlpha = 0.24 * (layer.opacity ?? 1);
+      overlayCtx.translate(cx, cy);
+      overlayCtx.rotate(rot);
+      overlayCtx.scale(layer.flipX ? -1 : 1, layer.flipY ? -1 : 1);
+      overlayCtx.drawImage(imgCanvas, -sw / 2, -sh / 2, sw, sh);
+      overlayCtx.restore();
+    }
+  }
+
   overlayCtx.save();
   overlayCtx.translate(cx, cy);
   overlayCtx.rotate(rot);
 
   // Subtle dark outer line + crisp Photoshop cyan-blue 2px transform frame
-  overlayCtx.strokeStyle = 'rgba(0, 0, 0, 0.35)';
+  overlayCtx.strokeStyle = 'rgba(0, 0, 0, 0.45)';
   overlayCtx.lineWidth = 4;
   overlayCtx.strokeRect(-sw / 2, -sh / 2, sw, sh);
 
   overlayCtx.strokeStyle = '#18a0fb';
-  overlayCtx.lineWidth = 2;
+  overlayCtx.lineWidth = 2.25;
   overlayCtx.strokeRect(-sw / 2, -sh / 2, sw, sh);
 
   // Rotation stem & top handle
   overlayCtx.beginPath();
   overlayCtx.moveTo(0, -sh / 2);
-  overlayCtx.lineTo(0, -sh / 2 - 34);
+  overlayCtx.lineTo(0, -sh / 2 - 36);
   overlayCtx.stroke();
 
-  // Small, crisp Photoshop square anchor points (14x14 in 1024-space = ~7x7px on screen)
-  const hs = 14;
+  // Crisp Photoshop square anchor points
+  const hs = 15;
   for (const h of getPhotoshopHandles(sw, sh)) {
     overlayCtx.fillStyle = '#ffffff';
     overlayCtx.strokeStyle = '#18a0fb';
@@ -850,13 +895,14 @@ function renderOverlay() {
 
   // Top rotation circle
   overlayCtx.beginPath();
-  overlayCtx.arc(0, -sh / 2 - 36, 8, 0, Math.PI * 2);
+  overlayCtx.arc(0, -sh / 2 - 38, 8.5, 0, Math.PI * 2);
   overlayCtx.fillStyle = '#ffffff';
   overlayCtx.fill();
   overlayCtx.lineWidth = 2.5;
   overlayCtx.strokeStyle = '#18a0fb';
   overlayCtx.stroke();
 
+  overlayCtx.restore();
   overlayCtx.restore();
 }
 
@@ -1108,9 +1154,8 @@ function renderStopsList() {
     swatchGrid.className = 'solid-swatches-grid';
     for (const sw of SOLID_SWATCHES) {
       const btn = document.createElement('button');
-      btn.className = `solid-swatch-btn ${
-        sw.color.toLowerCase() === primaryStop.color.toLowerCase() ? 'active' : ''
-      }`;
+      btn.className = `solid-swatch-btn ${sw.color.toLowerCase() === primaryStop.color.toLowerCase() ? 'active' : ''
+        }`;
       btn.style.background = sw.color;
       btn.dataset.color = sw.color;
       btn.title = `${sw.name} (${sw.color})`;
@@ -1667,9 +1712,11 @@ let dragStart = null;
 
 function clientToCanvas1024(e) {
   const rect = el.overlayCanvas.getBoundingClientRect();
+  const px = ((e.clientX - rect.left) / rect.width) * PASTEBOARD_SIZE;
+  const py = ((e.clientY - rect.top) / rect.height) * PASTEBOARD_SIZE;
   return {
-    x: ((e.clientX - rect.left) / rect.width) * HIG.CANVAS_SIZE,
-    y: ((e.clientY - rect.top) / rect.height) * HIG.CANVAS_SIZE,
+    x: px - PASTEBOARD_OFFSET,
+    y: py - PASTEBOARD_OFFSET,
   };
 }
 
@@ -1914,12 +1961,26 @@ function endCanvasDrag(e) {
 el.overlayCanvas.addEventListener('pointerup', endCanvasDrag);
 el.overlayCanvas.addEventListener('pointercancel', endCanvasDrag);
 
+function setStageZoom(nextZoom) {
+  stageZoom = Math.max(0.45, Math.min(1.5, Math.round(nextZoom * 20) / 20));
+  if (el.pasteboardWrap) {
+    el.pasteboardWrap.style.setProperty('--stage-zoom', String(stageZoom));
+  }
+  if (el.zoomResetBtn) {
+    el.zoomResetBtn.textContent = `${Math.round(stageZoom * 100)}%`;
+  }
+}
+
 el.overlayCanvas.addEventListener(
   'wheel',
   (e) => {
+    e.preventDefault();
+    if (e.metaKey || e.ctrlKey) {
+      setStageZoom(stageZoom + (e.deltaY < 0 ? 0.1 : -0.1));
+      return;
+    }
     const layer = getSelectedLayer();
     if (!layer || !layer.visible) return;
-    e.preventDefault();
     layer.isStarter = false;
     isTransformActive = true;
     if (e.shiftKey) {
@@ -1952,6 +2013,10 @@ function bindEvents() {
 
   el.undoBtn.addEventListener('click', undo);
   el.redoBtn.addEventListener('click', redo);
+
+  if (el.zoomOutBtn) el.zoomOutBtn.addEventListener('click', () => setStageZoom(stageZoom - 0.15));
+  if (el.zoomResetBtn) el.zoomResetBtn.addEventListener('click', () => setStageZoom(1.0));
+  if (el.zoomInBtn) el.zoomInBtn.addEventListener('click', () => setStageZoom(stageZoom + 0.15));
 
   // Appearance switcher
   el.appearanceControl.addEventListener('click', (e) => {
