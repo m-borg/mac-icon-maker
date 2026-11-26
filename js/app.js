@@ -1,12 +1,18 @@
-import { HIG, traceAppleSquircle, drawHIGGrid } from './squircle.js?v=9';
-import { GRADIENT_PRESETS, VECTOR_GLYPHS } from './presets.js?v=9';
+import {
+  HIG,
+  traceAppleSquircle,
+  traceMacFolderBack,
+  traceMacFolderFront,
+  drawHIGGrid,
+} from './squircle.js?v=10';
+import { GRADIENT_PRESETS, VECTOR_GLYPHS } from './presets.js?v=10';
 import {
   generateICNSBlob,
   generateIconsetZipBlob,
   generatePNGBlob,
   downsampleCanvas,
   triggerDownload,
-} from './exporters.js?v=9';
+} from './exporters.js?v=10';
 
 // Pasteboard is 3072x3072 (3x the 1024x1024 icon) with the icon centered at (1024, 1024),
 // giving a full 1024px of open interactive space outside the icon on all 4 sides!
@@ -67,10 +73,15 @@ function getNoisePattern(ctx) {
 }
 
 // Default application state
-const initialPreset = GRADIENT_PRESETS[0];
+const initialPreset = GRADIENT_PRESETS.find((p) => p.id === 'golden-gate-27') || GRADIENT_PRESETS[0];
 let state = {
   iconName: 'AppIcon',
-  appearance: 'default', // 'default' | 'dark' | 'clear' | 'tinted'
+  shapeMode: 'app', // 'app' | 'folder'
+  folder: {
+    badgeStyle: 'engraved', // 'engraved' | 'frosted' | 'normal'
+    showPaper: false,
+  },
+  appearance: 'default', // 'default' | 'dark' | 'clear' | 'clear-dark' | 'tinted'
   tintColor: '#3b82f6',
   showGrid: false,
   showHandles: true,
@@ -128,6 +139,8 @@ function pushHistory() {
     return copy;
   });
   const snap = JSON.stringify({
+    shapeMode: state.shapeMode,
+    folder: state.folder,
     appearance: state.appearance,
     tintColor: state.tintColor,
     activePresetId: state.activePresetId,
@@ -152,6 +165,8 @@ function pushHistoryDebounced() {
 
 function restoreSnapshot(snapStr) {
   const data = JSON.parse(snapStr);
+  state.shapeMode = data.shapeMode || 'app';
+  state.folder = data.folder || { badgeStyle: 'engraved', showPaper: false };
   state.appearance = data.appearance;
   state.tintColor = data.tintColor;
   state.activePresetId = data.activePresetId;
@@ -199,6 +214,7 @@ const el = {
   iconNameInput: document.getElementById('iconNameInput'),
   undoBtn: document.getElementById('undoBtn'),
   redoBtn: document.getElementById('redoBtn'),
+  iconShapeModeControl: document.getElementById('iconShapeModeControl'),
   appearanceControl: document.getElementById('appearanceControl'),
   tintColorBar: document.getElementById('tintColorBar'),
   tintColorInput: document.getElementById('tintColorInput'),
@@ -222,6 +238,10 @@ const el = {
   resetLayerBtn: document.getElementById('resetLayerBtn'),
   fitGlyphBtn: document.getElementById('fitGlyphBtn'),
   fitFullBleedBtn: document.getElementById('fitFullBleedBtn'),
+  fitFullBleedLabel: document.getElementById('fitFullBleedLabel'),
+  folderToolsBox: document.getElementById('folderToolsBox'),
+  folderBadgeStyleControl: document.getElementById('folderBadgeStyleControl'),
+  folderPaperToggle: document.getElementById('folderPaperToggle'),
   imageToolsBox: document.getElementById('imageToolsBox'),
   autoTrimBtn: document.getElementById('autoTrimBtn'),
   extractPaletteBtn: document.getElementById('extractPaletteBtn'),
@@ -389,9 +409,14 @@ function getProcessedImageCanvas(layer) {
 }
 
 /**
- * Renders the complete macOS 26 icon onto targetCtx at targetSize x targetSize.
+ * Renders the complete macOS 26/27 App Squircle or Liquid Glass Folder onto targetCtx.
  */
 function renderIcon(targetCtx, targetSize = HIG.CANVAS_SIZE, opts = {}) {
+  if (state.shapeMode === 'folder') {
+    renderFolderIcon(targetCtx, targetSize, opts);
+    return;
+  }
+
   const { includeGrid = false } = opts;
   const S = HIG.CANVAS_SIZE; // 1024
   const isFullCanvas = state.hig.canvasTarget === 'fullcanvas';
@@ -482,6 +507,172 @@ function renderIcon(targetCtx, targetSize = HIG.CANVAS_SIZE, opts = {}) {
     });
   }
 
+  targetCtx.restore();
+}
+
+/**
+ * Renders an authentic macOS 26 / 27 (Golden Gate) Liquid Glass Folder Icon:
+ * - Back panel with top-left S-curve tab (shaded 20% deeper for 3D separation + top specular edge)
+ * - Optional inner translucent paper document sheets peeking out
+ * - Front Liquid Glass pocket (x: 96..928, y: 266..876) with machined top lip groove,
+ *   debossed/engraved tonal glass emblem (or frosted/full-color artwork), and specular rim.
+ */
+function renderFolderIcon(targetCtx, targetSize = HIG.CANVAS_SIZE, opts = {}) {
+  const S = HIG.CANVAS_SIZE; // 1024
+  const C = S / 2; // 512
+  const smoothing = state.hig.smoothing;
+
+  targetCtx.save();
+  targetCtx.clearRect(0, 0, targetSize, targetSize);
+  const ratio = targetSize / S;
+  targetCtx.scale(ratio, ratio);
+
+  // 1. Apple HIG Outer Drop Shadow behind full folder silhouette
+  if (state.hig.outerShadow) {
+    const shadowTemp = document.createElement('canvas');
+    shadowTemp.width = S;
+    shadowTemp.height = S;
+    const stx = shadowTemp.getContext('2d');
+
+    stx.save();
+    stx.shadowColor = `rgba(0, 0, 0, ${HIG.SHADOW.opacity})`;
+    stx.shadowOffsetX = 0;
+    stx.shadowOffsetY = HIG.SHADOW.offsetY;
+    stx.shadowBlur = HIG.SHADOW.blur;
+    traceMacFolderBack(stx);
+    stx.fillStyle = '#000';
+    stx.fill();
+    traceMacFolderFront(stx, smoothing);
+    stx.fill();
+    stx.restore();
+
+    // Knock out interior so Clear modes stay translucent
+    stx.save();
+    stx.globalCompositeOperation = 'destination-out';
+    traceMacFolderBack(stx);
+    stx.fill();
+    traceMacFolderFront(stx, smoothing);
+    stx.fill();
+    stx.restore();
+
+    targetCtx.drawImage(shadowTemp, 0, 0);
+  }
+
+  // 2. Back Panel & Top-Left S-Curve Tab
+  targetCtx.save();
+  traceMacFolderBack(targetCtx);
+  targetCtx.clip();
+
+  renderBackground(targetCtx, 96, 148, 832, 728);
+
+  // Darken back panel slightly so it sits behind the front pocket in 3D space
+  const backShade = targetCtx.createLinearGradient(96, 148, 96, 310);
+  backShade.addColorStop(0, 'rgba(0, 0, 0, 0.14)');
+  backShade.addColorStop(1, 'rgba(0, 0, 0, 0.28)');
+  targetCtx.fillStyle = backShade;
+  targetCtx.fillRect(96, 148, 832, 728);
+
+  // Specular top rim on the back tab & shoulder
+  traceMacFolderBack(targetCtx);
+  const tabRim = targetCtx.createLinearGradient(96, 148, 928, 280);
+  tabRim.addColorStop(0, 'rgba(255, 255, 255, 0.85)');
+  tabRim.addColorStop(0.5, 'rgba(255, 255, 255, 0.48)');
+  tabRim.addColorStop(1, 'rgba(255, 255, 255, 0.18)');
+  targetCtx.strokeStyle = tabRim;
+  targetCtx.lineWidth = Math.max(4, state.glass.rimWidth * 1.5);
+  targetCtx.stroke();
+  targetCtx.restore();
+
+  // 3. Optional Inner Document Paper Peek (between back tab and front pocket)
+  if (state.folder?.showPaper) {
+    targetCtx.save();
+    traceMacFolderBack(targetCtx);
+    targetCtx.clip();
+
+    // Back tilted sheet
+    targetCtx.save();
+    targetCtx.translate(512, 280);
+    targetCtx.rotate(-0.022);
+    targetCtx.shadowColor = 'rgba(0, 0, 0, 0.22)';
+    targetCtx.shadowBlur = 12;
+    targetCtx.shadowOffsetY = 2;
+    traceAppleSquircle(targetCtx, -350, -64, 700, 140, 22, 0.6);
+    targetCtx.fillStyle = 'rgba(240, 246, 255, 0.72)';
+    targetCtx.fill();
+    targetCtx.restore();
+
+    // Front crisp white/glass document sheet
+    targetCtx.save();
+    targetCtx.shadowColor = 'rgba(0, 0, 0, 0.25)';
+    targetCtx.shadowBlur = 14;
+    targetCtx.shadowOffsetY = 3;
+    traceAppleSquircle(targetCtx, 142, 228, 740, 130, 22, 0.6);
+    const paperGrad = targetCtx.createLinearGradient(142, 228, 142, 310);
+    paperGrad.addColorStop(0, 'rgba(255, 255, 255, 0.94)');
+    paperGrad.addColorStop(1, 'rgba(226, 236, 250, 0.85)');
+    targetCtx.fillStyle = paperGrad;
+    targetCtx.fill();
+    targetCtx.restore();
+
+    targetCtx.restore();
+  }
+
+  // 4. Cast shadow from Front Pocket onto Back Panel
+  targetCtx.save();
+  traceMacFolderBack(targetCtx);
+  targetCtx.clip();
+  targetCtx.shadowColor = 'rgba(0, 0, 0, 0.34)';
+  targetCtx.shadowBlur = 22;
+  targetCtx.shadowOffsetY = -4;
+  traceMacFolderFront(targetCtx, smoothing);
+  targetCtx.fillStyle = '#000';
+  targetCtx.fill();
+  targetCtx.restore();
+
+  // 5. Front Liquid Glass Pocket (x: 96..928, y: 266..876)
+  targetCtx.save();
+  traceMacFolderFront(targetCtx, smoothing);
+  targetCtx.clip();
+
+  renderBackground(targetCtx, 96, 266, 832, 610);
+
+  // Subtle brighter front-pocket glass luminance
+  const frontLift = targetCtx.createLinearGradient(96, 266, 96, 876);
+  frontLift.addColorStop(0, 'rgba(255, 255, 255, 0.16)');
+  frontLift.addColorStop(0.5, 'rgba(255, 255, 255, 0.04)');
+  frontLift.addColorStop(1, 'rgba(0, 0, 0, 0.1)');
+  targetCtx.fillStyle = frontLift;
+  targetCtx.fillRect(96, 266, 832, 610);
+
+  if (state.glass.noise > 0.002) {
+    targetCtx.save();
+    targetCtx.globalAlpha = state.glass.noise;
+    targetCtx.fillStyle = getNoisePattern(targetCtx);
+    targetCtx.fillRect(96, 266, 832, 610);
+    targetCtx.restore();
+  }
+
+  // Signature macOS Folder Top Lip Crease / Groove along y = 286
+  targetCtx.save();
+  const grooveShadow = targetCtx.createLinearGradient(96, 266, 96, 294);
+  grooveShadow.addColorStop(0, 'rgba(255, 255, 255, 0.36)');
+  grooveShadow.addColorStop(0.65, 'rgba(255, 255, 255, 0.02)');
+  grooveShadow.addColorStop(0.82, 'rgba(0, 0, 0, 0.14)');
+  grooveShadow.addColorStop(1, 'rgba(255, 255, 255, 0.18)');
+  targetCtx.fillStyle = grooveShadow;
+  targetCtx.fillRect(96, 266, 832, 28);
+  targetCtx.restore();
+
+  // Foreground Layers rendered on the Front Pocket
+  for (const layer of state.layers) {
+    if (!layer.visible) continue;
+    renderLayer(targetCtx, layer, C);
+  }
+
+  // Liquid Glass Sheen, Inner Depth & Specular Rim on Front Pocket
+  renderLiquidGlassOverlays(targetCtx, 96, 266, 832, 610, 68, smoothing);
+
+  targetCtx.restore(); // end front pocket clip
   targetCtx.restore();
 }
 
@@ -671,8 +862,74 @@ function renderLayer(ctx, layer, center) {
   }
   tctx.restore();
 
+  // Apply macOS 27 Folder Badge style (Engraved Tonal Glass or Frosted Glass) when in Folder Mode
+  const isFolderEngraved = state.shapeMode === 'folder' && state.folder?.badgeStyle === 'engraved';
+  const isFolderFrosted = state.shapeMode === 'folder' && state.folder?.badgeStyle === 'frosted';
+
+  if (isFolderEngraved) {
+    // Authentic macOS 26/27 debossed/engraved tonal glass emblem (like Utilities/Applications folders)
+    const primaryHex = state.background.stops?.[0]?.color || '#1b84f2';
+    const prgb = hexToRgb(primaryHex);
+    const darkR = Math.max(0, Math.round(prgb.r * 0.42));
+    const darkG = Math.max(0, Math.round(prgb.g * 0.42));
+    const darkB = Math.max(0, Math.round(prgb.b * 0.45));
+
+    // 1. Tonal recessed fill
+    tctx.save();
+    tctx.globalCompositeOperation = 'source-in';
+    const engraveGrad = tctx.createLinearGradient(0, pad, 0, pad + drawH);
+    engraveGrad.addColorStop(0, `rgba(${darkR}, ${darkG}, ${darkB}, 0.62)`);
+    engraveGrad.addColorStop(1, `rgba(${darkR}, ${darkG}, ${darkB}, 0.44)`);
+    tctx.fillStyle = engraveGrad;
+    tctx.fillRect(0, 0, tw, th);
+    tctx.restore();
+
+    // 2. Top-left inner recess shadow (debossed depth)
+    const innerSh = document.createElement('canvas');
+    innerSh.width = tw;
+    innerSh.height = th;
+    const istx = innerSh.getContext('2d');
+    istx.drawImage(temp, 0, 0);
+    istx.globalCompositeOperation = 'destination-out';
+    istx.drawImage(temp, 3, 4.5);
+    istx.globalCompositeOperation = 'source-in';
+    istx.fillStyle = 'rgba(0, 0, 0, 0.38)';
+    istx.fillRect(0, 0, tw, th);
+
+    tctx.save();
+    tctx.globalCompositeOperation = 'source-atop';
+    tctx.drawImage(innerSh, 0, 0);
+    tctx.restore();
+
+    // 3. Bottom-right specular catch-light rim
+    const botRim = document.createElement('canvas');
+    botRim.width = tw;
+    botRim.height = th;
+    const brtx = botRim.getContext('2d');
+    brtx.drawImage(temp, 0, 0);
+    brtx.globalCompositeOperation = 'destination-out';
+    brtx.drawImage(temp, -2.5, -3.5);
+    brtx.globalCompositeOperation = 'source-in';
+    brtx.fillStyle = 'rgba(255, 255, 255, 0.58)';
+    brtx.fillRect(0, 0, tw, th);
+
+    tctx.save();
+    tctx.globalCompositeOperation = 'source-atop';
+    tctx.drawImage(botRim, 0, 0);
+    tctx.restore();
+  } else if (isFolderFrosted) {
+    tctx.save();
+    tctx.globalCompositeOperation = 'source-in';
+    const frostGrad = tctx.createLinearGradient(0, pad, 0, pad + drawH);
+    frostGrad.addColorStop(0, 'rgba(255, 255, 255, 0.92)');
+    frostGrad.addColorStop(1, 'rgba(225, 240, 255, 0.64)');
+    tctx.fillStyle = frostGrad;
+    tctx.fillRect(0, 0, tw, th);
+    tctx.restore();
+  }
+
   // Apply macOS 27 Foreground Liquid Glass Rim & refraction highlight if enabled
-  if (layer.glassEffect) {
+  if (layer.glassEffect && !isFolderEngraved) {
     // 1. Subtle glass surface sheen across the glyph
     tctx.save();
     tctx.globalCompositeOperation = 'source-atop';
@@ -733,7 +990,7 @@ function renderLayer(ctx, layer, center) {
   ctx.rotate(((layer.rotation || 0) * Math.PI) / 180);
   ctx.scale(layer.flipX ? -1 : 1, layer.flipY ? -1 : 1);
 
-  if (layer.shadow && layer.shadow.enabled && layer.shadow.blur > 0) {
+  if (layer.shadow && layer.shadow.enabled && layer.shadow.blur > 0 && !isFolderEngraved) {
     ctx.shadowColor = `rgba(0, 0, 0, ${layer.shadow.opacity ?? 0.35})`;
     ctx.shadowBlur = layer.shadow.blur;
     ctx.shadowOffsetX = 0;
@@ -834,10 +1091,23 @@ function renderOverlay() {
   overlayCtx.translate(PASTEBOARD_OFFSET, PASTEBOARD_OFFSET);
 
   if (state.showGrid) {
-    drawHIGGrid(overlayCtx, S, {
-      smoothing: state.hig.smoothing,
-      radiusRatio: state.hig.cornerRadius / HIG.SQUIRCLE_SIZE,
-    });
+    if (state.shapeMode === 'folder') {
+      overlayCtx.save();
+      traceMacFolderBack(overlayCtx);
+      overlayCtx.strokeStyle = 'rgba(56, 217, 255, 0.55)';
+      overlayCtx.lineWidth = 2.5;
+      overlayCtx.stroke();
+      traceMacFolderFront(overlayCtx, state.hig.smoothing);
+      overlayCtx.strokeStyle = 'rgba(255, 115, 215, 0.65)';
+      overlayCtx.lineWidth = 2.5;
+      overlayCtx.stroke();
+      overlayCtx.restore();
+    } else {
+      drawHIGGrid(overlayCtx, S, {
+        smoothing: state.hig.smoothing,
+        radiusRatio: state.hig.cornerRadius / HIG.SQUIRCLE_SIZE,
+      });
+    }
   }
 
   // Snap guides while dragging
@@ -873,23 +1143,26 @@ function renderOverlay() {
   const cy = S / 2 + (layer.y || 0);
   const rot = ((layer.rotation || 0) * Math.PI) / 180;
 
-  // Draw a subtle 22% opacity Photoshop/Figma "crop ghost" of the active image outside the 824x824 squircle
-  // so the user can see the whole image when scaling it larger than the icon!
+  // Draw a subtle 24% opacity Photoshop/Figma "crop ghost" of the active image outside the icon/folder pocket
   if (layer.type === 'image') {
     const imgCanvas = getProcessedImageCanvas(layer);
     if (imgCanvas) {
       overlayCtx.save();
       overlayCtx.beginPath();
       overlayCtx.rect(-PASTEBOARD_OFFSET, -PASTEBOARD_OFFSET, PASTEBOARD_SIZE, PASTEBOARD_SIZE);
-      traceAppleSquircle(
-        overlayCtx,
-        HIG.MARGIN,
-        HIG.MARGIN,
-        HIG.SQUIRCLE_SIZE,
-        HIG.SQUIRCLE_SIZE,
-        state.hig.cornerRadius,
-        state.hig.smoothing
-      );
+      if (state.shapeMode === 'folder') {
+        traceMacFolderFront(overlayCtx, state.hig.smoothing);
+      } else {
+        traceAppleSquircle(
+          overlayCtx,
+          HIG.MARGIN,
+          HIG.MARGIN,
+          HIG.SQUIRCLE_SIZE,
+          HIG.SQUIRCLE_SIZE,
+          state.hig.cornerRadius,
+          state.hig.smoothing
+        );
+      }
       overlayCtx.clip('evenodd');
 
       overlayCtx.globalAlpha = 0.24 * (layer.opacity ?? 1);
@@ -1488,6 +1761,28 @@ function syncActiveLayerInspector() {
 }
 
 function syncAllUI() {
+  // Shape mode (App Squircle vs Folder)
+  const isFolder = state.shapeMode === 'folder';
+  if (el.iconShapeModeControl) {
+    for (const btn of el.iconShapeModeControl.querySelectorAll('.seg-btn')) {
+      btn.classList.toggle('active', btn.dataset.shapemode === state.shapeMode);
+    }
+  }
+  if (el.folderToolsBox) {
+    el.folderToolsBox.classList.toggle('hidden', !isFolder);
+  }
+  if (el.fitFullBleedLabel) {
+    el.fitFullBleedLabel.textContent = isFolder ? 'Fill Folder' : 'Fill Squircle';
+  }
+  if (el.folderBadgeStyleControl && state.folder) {
+    for (const btn of el.folderBadgeStyleControl.querySelectorAll('.seg-btn')) {
+      btn.classList.toggle('active', btn.dataset.badgestyle === state.folder.badgeStyle);
+    }
+  }
+  if (el.folderPaperToggle && state.folder) {
+    el.folderPaperToggle.checked = Boolean(state.folder.showPaper);
+  }
+
   // Appearance
   for (const btn of el.appearanceControl.querySelectorAll('.seg-btn')) {
     btn.classList.toggle('active', btn.dataset.appearance === state.appearance);
@@ -1613,7 +1908,7 @@ function loadImageFile(file) {
         visible: true,
         assetId,
         x: 0,
-        y: 0,
+        y: state.shapeMode === 'folder' ? 60 : 0,
         scale: initialScale,
         scaleX: initialScale,
         scaleY: initialScale,
@@ -1627,6 +1922,11 @@ function loadImageFile(file) {
         glassEffect: false,
         removeBg: { enabled: false, color: cornerHex, tolerance: 28 },
       };
+
+      // If dropping a full-color opaque image onto a folder, default badgeStyle to 'normal' (Full Color)
+      if (state.shapeMode === 'folder' && isOpaqueRect) {
+        state.folder.badgeStyle = 'normal';
+      }
 
       state.layers.push(newLayer);
       state.selectedLayerId = newLayer.id;
@@ -2070,6 +2370,85 @@ function bindEvents() {
   if (el.zoomResetBtn) el.zoomResetBtn.addEventListener('click', () => setStageZoom(1.0));
   if (el.zoomInBtn) el.zoomInBtn.addEventListener('click', () => setStageZoom(stageZoom + 0.15));
 
+  // App vs Folder shape mode switcher
+  if (el.iconShapeModeControl) {
+    el.iconShapeModeControl.addEventListener('click', (e) => {
+      const btn = e.target.closest('.seg-btn');
+      if (!btn) return;
+      const nextMode = btn.dataset.shapemode;
+      if (nextMode === state.shapeMode) return;
+      state.shapeMode = nextMode;
+
+      // Center active layer vertically on the folder front pocket (y = +60) or app center (y = 0)
+      const activeLayer = getSelectedLayer();
+      if (activeLayer) {
+        if (nextMode === 'folder' && activeLayer.y === 0) {
+          activeLayer.y = 60;
+          if (activeLayer.fitMode !== 'fullBleed' && activeLayer.scale > 0.78) {
+            activeLayer.scale = 0.72;
+            activeLayer.scaleX = 0.72;
+            activeLayer.scaleY = 0.72;
+          }
+        } else if (nextMode === 'app' && activeLayer.y === 60) {
+          activeLayer.y = 0;
+          if (activeLayer.scale === 0.72) {
+            activeLayer.scale = 1;
+            activeLayer.scaleX = 1;
+            activeLayer.scaleY = 1;
+          }
+        }
+        // If active layer is a full-color opaque image, use Full Color mode on folder; for symbols/text use Engraved
+        if (nextMode === 'folder') {
+          if (activeLayer.type === 'image') {
+            const asset = imageAssetStore.get(activeLayer.assetId);
+            const isOpaque = asset ? detectCornerInfo(asset.canvas).isOpaqueRect : false;
+            state.folder.badgeStyle = isOpaque ? 'normal' : 'engraved';
+          } else {
+            state.folder.badgeStyle = 'engraved';
+          }
+        }
+      }
+
+      // If still on initial Golden Gate preset, switch to iconic macOS Folder Sky Blue when entering Folder mode
+      if (nextMode === 'folder' && state.activePresetId === 'golden-gate-27') {
+        const folderBlue = GRADIENT_PRESETS.find((p) => p.id === 'folder-sky-27');
+        if (folderBlue) {
+          state.activePresetId = folderBlue.id;
+          state.background = deepClone(folderBlue.background);
+          state.glass = { ...state.glass, ...deepClone(folderBlue.glass) };
+        }
+      }
+
+      pushHistory();
+      syncAllUI();
+      renderAll();
+      showToast(
+        nextMode === 'folder'
+          ? 'Switched to macOS 27 Liquid Glass Folder mode'
+          : 'Switched to macOS App Squircle mode'
+      );
+    });
+  }
+
+  if (el.folderBadgeStyleControl) {
+    el.folderBadgeStyleControl.addEventListener('click', (e) => {
+      const btn = e.target.closest('.seg-btn');
+      if (!btn) return;
+      state.folder.badgeStyle = btn.dataset.badgestyle;
+      pushHistory();
+      syncAllUI();
+      renderAll();
+    });
+  }
+
+  if (el.folderPaperToggle) {
+    el.folderPaperToggle.addEventListener('change', (e) => {
+      state.folder.showPaper = e.target.checked;
+      pushHistory();
+      renderAll();
+    });
+  }
+
   // Appearance switcher
   el.appearanceControl.addEventListener('click', (e) => {
     const btn = e.target.closest('.seg-btn');
@@ -2272,7 +2651,7 @@ function bindEvents() {
     const layer = getSelectedLayer();
     if (!layer) return;
     layer.x = 0;
-    layer.y = 0;
+    layer.y = state.shapeMode === 'folder' ? 60 : 0;
     pushHistory();
     renderAll();
     showToast('Centered layer');
@@ -2281,11 +2660,12 @@ function bindEvents() {
   el.resetLayerBtn.addEventListener('click', () => {
     const layer = getSelectedLayer();
     if (!layer) return;
+    const s = state.shapeMode === 'folder' ? 0.72 : 1;
     layer.x = 0;
-    layer.y = 0;
-    layer.scale = 1;
-    layer.scaleX = 1;
-    layer.scaleY = 1;
+    layer.y = state.shapeMode === 'folder' ? 60 : 0;
+    layer.scale = s;
+    layer.scaleX = s;
+    layer.scaleY = s;
     layer.rotation = 0;
     layer.flipX = false;
     layer.flipY = false;
@@ -2300,12 +2680,13 @@ function bindEvents() {
   el.fitGlyphBtn.addEventListener('click', () => {
     const layer = getSelectedLayer();
     if (!layer) return;
+    const s = state.shapeMode === 'folder' ? 0.72 : 1;
     layer.fitMode = 'glyph';
     layer.x = 0;
-    layer.y = 0;
-    layer.scale = 1;
-    layer.scaleX = 1;
-    layer.scaleY = 1;
+    layer.y = state.shapeMode === 'folder' ? 60 : 0;
+    layer.scale = s;
+    layer.scaleX = s;
+    layer.scaleY = s;
     layer.shadow = { ...layer.shadow, enabled: true };
     isTransformActive = true;
     pushHistory();
@@ -2317,17 +2698,22 @@ function bindEvents() {
     const layer = getSelectedLayer();
     if (!layer) return;
     const { w, h } = getLayerBaseDimensions(layer);
-    const fillScale = Math.max(HIG.SQUIRCLE_SIZE / w, HIG.SQUIRCLE_SIZE / h);
+    const targetW = state.shapeMode === 'folder' ? 832 : HIG.SQUIRCLE_SIZE;
+    const targetH = state.shapeMode === 'folder' ? 610 : HIG.SQUIRCLE_SIZE;
+    const fillScale = Math.max(targetW / w, targetH / h);
     layer.fitMode = 'fullBleed';
     layer.x = 0;
-    layer.y = 0;
+    layer.y = state.shapeMode === 'folder' ? 60 : 0;
     layer.scale = fillScale;
     layer.scaleX = fillScale;
     layer.scaleY = fillScale;
-    if (layer.type === 'image') layer.shadow = { ...layer.shadow, enabled: false };
+    if (layer.type === 'image') {
+      layer.shadow = { ...layer.shadow, enabled: false };
+      if (state.shapeMode === 'folder') state.folder.badgeStyle = 'normal';
+    }
     isTransformActive = true;
     pushHistory();
-    syncActiveLayerInspector();
+    syncAllUI();
     renderAll();
   });
 

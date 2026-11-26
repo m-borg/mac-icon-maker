@@ -7,8 +7,8 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <title>Icon Studio — macOS 26 &amp; 27 Liquid Glass Icon Maker</title>
-  <meta name="description" content="Create modern macOS 26 (Tahoe) and macOS 27 (Golden Gate) Liquid Glass app icons following Apple HIG. Drop images, adjust gradients and specular glass, preview in Dock, and export .icns, .iconset.zip, and PNG." />
-  <link rel="stylesheet" href="styles.css?v=9" />
+  <meta name="description" content="Create modern macOS 26 (Tahoe) and macOS 27 (Golden Gate) Liquid Glass app and folder icons following Apple HIG. Drop images, adjust gradients and specular glass, preview in Dock, and export .icns, .iconset.zip, and PNG." />
+  <link rel="stylesheet" href="styles.css?v=10" />
 </head>
 <body>
   <!-- Ambient Tahoe desktop wallpaper backdrop -->
@@ -66,6 +66,11 @@
       </div>
 
       <div class="toolbar-center">
+        <div class="segmented-control" id="iconShapeModeControl" role="group" aria-label="Icon Type">
+          <button class="seg-btn active" data-shapemode="app" title="macOS App Squircle Icon">▣ App</button>
+          <button class="seg-btn" data-shapemode="folder" title="macOS 27 Liquid Glass Folder Icon">📁 Folder</button>
+        </div>
+        <div class="divider-v"></div>
         <div class="segmented-control" id="appearanceControl" role="group" aria-label="System Appearance">
           <button class="seg-btn active" data-appearance="default">Default</button>
           <button class="seg-btn" data-appearance="dark">Dark</button>
@@ -155,16 +160,32 @@
               </div>
             </div>
 
-            <!-- 1-Click macOS 26 Fit Modes -->
+            <!-- 1-Click macOS 26/27 Fit Modes -->
             <div class="fit-mode-group">
-              <button id="fitGlyphBtn" class="fit-pill" title="Fit cleanly inside 624×624 safe zone">
+              <button id="fitGlyphBtn" class="fit-pill" title="Fit cleanly inside safe zone">
                 <span class="fit-icon">◎</span>
                 <span>Floating Glyph</span>
               </button>
-              <button id="fitFullBleedBtn" class="fit-pill" title="Un-jail: fill entire 824×824 squircle edge-to-edge">
+              <button id="fitFullBleedBtn" class="fit-pill" title="Fill entire squircle or folder pocket edge-to-edge">
                 <span class="fit-icon">▣</span>
-                <span>Fill Squircle</span>
+                <span id="fitFullBleedLabel">Fill Squircle</span>
               </button>
+            </div>
+
+            <!-- Folder-specific Badge & Paper Options (shown in Folder Mode) -->
+            <div id="folderToolsBox" class="sub-box hidden">
+              <div class="sub-box-label">macOS 27 Folder Badge Style</div>
+              <div class="segmented-control compact" id="folderBadgeStyleControl">
+                <button class="seg-btn active" data-badgestyle="engraved" title="Debossed tonal glass emblem like macOS Utilities/Applications folders">Engraved</button>
+                <button class="seg-btn" data-badgestyle="frosted" title="Translucent frosted white glass glyph">Frosted</button>
+                <button class="seg-btn" data-badgestyle="normal" title="Full-color original image/artwork">Full Color</button>
+              </div>
+              <div class="toggle-row">
+                <label class="switch-label">
+                  <input id="folderPaperToggle" type="checkbox" />
+                  <span>Inner Document Paper Peek</span>
+                </label>
+              </div>
             </div>
 
             <!-- Image-specific Smart Tools -->
@@ -539,6 +560,6 @@
   <!-- Toast Notification -->
   <div id="toast" class="toast hidden" role="status"></div>
 
-  <script type="module" src="js/app.js?v=9"></script>
+  <script type="module" src="js/app.js?v=10"></script>
 </body>
 </html>

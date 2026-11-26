@@ -4,6 +4,38 @@
 
 export const GRADIENT_PRESETS = [
   {
+    id: 'folder-sky-27',
+    name: 'macOS Folder Blue',
+    category: 'Folders',
+    appearance: 'default',
+    background: {
+      type: 'linear',
+      angle: 180,
+      stops: [
+        { color: '#6fd3ff', pos: 0 },
+        { color: '#38a9ff', pos: 52 },
+        { color: '#1b84f2', pos: 100 },
+      ],
+    },
+    glass: { sheen: 0.22, rimIntensity: 0.9, rimWidth: 3.5, innerGlow: 0.34 },
+  },
+  {
+    id: 'folder-pink-27',
+    name: 'Utilities Pink',
+    category: 'Folders',
+    appearance: 'default',
+    background: {
+      type: 'linear',
+      angle: 180,
+      stops: [
+        { color: '#ff7ec3', pos: 0 },
+        { color: '#f24ca3', pos: 55 },
+        { color: '#d42c85', pos: 100 },
+      ],
+    },
+    glass: { sheen: 0.22, rimIntensity: 0.88, rimWidth: 3.5, innerGlow: 0.34 },
+  },
+  {
     id: 'golden-gate-27',
     name: 'Golden Gate 27',
     category: 'macOS 27',

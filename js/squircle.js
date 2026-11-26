@@ -120,6 +120,48 @@ export function createSquirclePath(ctx, x, y, size, radiusRatio = HIG.CORNER_RAT
 }
 
 /**
+ * Traces the macOS 26 / 27 (Golden Gate) Folder Back Panel including the top-left S-curve tab.
+ * Coordinates are in 1024x1024 master canvas space.
+ */
+export function traceMacFolderBack(ctx) {
+  const L = 96;
+  const R = 928;
+  const tabTop = 148;
+  const shoulderTop = 210;
+  const bot = 872;
+  const rTop = 52;
+  const rBot = 80;
+
+  ctx.beginPath();
+  // Start after top-left tab corner
+  ctx.moveTo(L + rTop, tabTop);
+  // Top flat edge of tab
+  ctx.lineTo(342, tabTop);
+  // Characteristic macOS smooth S-curve down to the back shoulder
+  ctx.bezierCurveTo(392, tabTop, 408, shoulderTop, 462, shoulderTop);
+  // Back shoulder to top-right corner
+  ctx.lineTo(R - rTop, shoulderTop);
+  ctx.quadraticCurveTo(R, shoulderTop, R, shoulderTop + rTop);
+  // Right edge down to bottom-right corner
+  ctx.lineTo(R, bot - rBot);
+  ctx.quadraticCurveTo(R, bot, R - rBot, bot);
+  // Bottom edge to bottom-left corner
+  ctx.lineTo(L + rBot, bot);
+  ctx.quadraticCurveTo(L, bot, L, bot - rBot);
+  // Left edge up to top-left tab corner
+  ctx.lineTo(L, tabTop + rTop);
+  ctx.quadraticCurveTo(L, tabTop, L + rTop, tabTop);
+  ctx.closePath();
+}
+
+/**
+ * Traces the macOS 26 / 27 Folder Front Liquid Glass Pocket (x: 96..928, y: 266..876).
+ */
+export function traceMacFolderFront(ctx, smoothing = 0.6) {
+  traceAppleSquircle(ctx, 96, 266, 832, 610, 68, smoothing);
+}
+
+/**
  * Draws the official Apple macOS App Icon Layout Grid overlay onto a canvas context.
  * Intended strictly for UI preview — never baked into exported icons.
  */
