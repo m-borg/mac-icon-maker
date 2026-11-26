@@ -1,12 +1,12 @@
-import { HIG, traceAppleSquircle, drawHIGGrid } from './squircle.js';
-import { GRADIENT_PRESETS, VECTOR_GLYPHS } from './presets.js';
+import { HIG, traceAppleSquircle, drawHIGGrid } from './squircle.js?v=3';
+import { GRADIENT_PRESETS, VECTOR_GLYPHS } from './presets.js?v=3';
 import {
   generateICNSBlob,
   generateIconsetZipBlob,
   generatePNGBlob,
   downsampleCanvas,
   triggerDownload,
-} from './exporters.js';
+} from './exporters.js?v=3';
 
 // In-memory store for non-serializable image assets keyed by assetId
 const imageAssetStore = new Map();
@@ -752,18 +752,48 @@ function renderLiquidGlassOverlays(ctx, x, y, w, h, radius, smoothing) {
 
 // Snap state for visual alignment guides
 let activeSnapGuides = { x: false, y: false };
+let hoveredHandleId = null;
 
-function getHandlePositions(sw, sh) {
-  return [
-    { id: 'nw', x: -sw / 2, y: -sh / 2, cursor: 'nwse-resize' },
-    { id: 'n', x: 0, y: -sh / 2, cursor: 'ns-resize' },
-    { id: 'ne', x: sw / 2, y: -sh / 2, cursor: 'nesw-resize' },
-    { id: 'e', x: sw / 2, y: 0, cursor: 'ew-resize' },
-    { id: 'se', x: sw / 2, y: sh / 2, cursor: 'nwse-resize' },
-    { id: 's', x: 0, y: sh / 2, cursor: 'ns-resize' },
-    { id: 'sw', x: -sw / 2, y: sh / 2, cursor: 'nesw-resize' },
-    { id: 'w', x: -sw / 2, y: 0, cursor: 'ew-resize' },
+/**
+ * Computes the visual box and handle positions in layer-local coordinates,
+ * clamping to the visible 1024x1024 canvas when an image is larger than the canvas
+ * (e.g. tall/wide images in Fill Squircle mode) so all 8 handles stay on-screen and clickable.
+ */
+function getLayerBoxAndHandles(layer) {
+  const S = HIG.CANVAS_SIZE;
+  const { w, h } = getLayerBaseDimensions(layer);
+  const rawW = w * (layer.scale ?? 1);
+  const rawH = h * (layer.scale ?? 1);
+  const cx = S / 2 + (layer.x || 0);
+  const cy = S / 2 + (layer.y || 0);
+
+  // Clamp half-extents so handles never disappear off the edges of the 1024x1024 canvas
+  const pad = 34;
+  const maxLeft = Math.max(40, cx - pad);
+  const maxRight = Math.max(40, S - pad - cx);
+  const maxTop = Math.max(76, cy - pad);
+  const maxBottom = Math.max(40, S - pad - cy);
+
+  const x1 = -Math.min(rawW / 2, maxLeft);
+  const x2 = Math.min(rawW / 2, maxRight);
+  const y1 = -Math.min(rawH / 2, maxTop);
+  const y2 = Math.min(rawH / 2, maxBottom);
+  const mx = (x1 + x2) / 2;
+  const my = (y1 + y2) / 2;
+  const rotY = y1 - 42;
+
+  const handles = [
+    { id: 'nw', x: x1, y: y1, cursor: 'nwse-resize', isCorner: true },
+    { id: 'n', x: mx, y: y1, cursor: 'ns-resize', isCorner: false },
+    { id: 'ne', x: x2, y: y1, cursor: 'nesw-resize', isCorner: true },
+    { id: 'e', x: x2, y: my, cursor: 'ew-resize', isCorner: false },
+    { id: 'se', x: x2, y: y2, cursor: 'nwse-resize', isCorner: true },
+    { id: 's', x: mx, y: y2, cursor: 'ns-resize', isCorner: false },
+    { id: 'sw', x: x1, y: y2, cursor: 'nesw-resize', isCorner: true },
+    { id: 'w', x: x1, y: my, cursor: 'ew-resize', isCorner: false },
   ];
+
+  return { cx, cy, x1, y1, x2, y2, mx, my, rotY, rawW, rawH, handles };
 }
 
 function renderOverlay() {
@@ -799,51 +829,65 @@ function renderOverlay() {
   }
 
   // Active layer selection box & 8 resize handles + rotation knob
+  // ALWAYS rendered whenever a visible layer is selected and state.showHandles is true.
   const layer = getSelectedLayer();
   if (!layer || !layer.visible || !state.showHandles) return;
 
-  const { w, h } = getLayerBaseDimensions(layer);
-  const sw = w * (layer.scale ?? 1);
-  const sh = h * (layer.scale ?? 1);
-  const cx = S / 2 + (layer.x || 0);
-  const cy = S / 2 + (layer.y || 0);
+  const box = getLayerBoxAndHandles(layer);
   const rot = ((layer.rotation || 0) * Math.PI) / 180;
 
   overlayCtx.save();
-  overlayCtx.translate(cx, cy);
+  overlayCtx.translate(box.cx, box.cy);
   overlayCtx.rotate(rot);
 
-  // Bounding box outline
-  overlayCtx.strokeStyle = 'rgba(78, 175, 255, 0.92)';
-  overlayCtx.lineWidth = 3;
-  overlayCtx.strokeRect(-sw / 2, -sh / 2, sw, sh);
+  // Bounding box outline (double-stroke for high contrast on both dark and white images)
+  overlayCtx.strokeStyle = 'rgba(0, 0, 0, 0.45)';
+  overlayCtx.lineWidth = 5;
+  overlayCtx.strokeRect(box.x1, box.y1, box.x2 - box.x1, box.y2 - box.y1);
+
+  overlayCtx.strokeStyle = '#38a3ff';
+  overlayCtx.lineWidth = 2.75;
+  overlayCtx.strokeRect(box.x1, box.y1, box.x2 - box.x1, box.y2 - box.y1);
 
   // Rotation stem & knob
-  const rotY = -sh / 2 - 44;
   overlayCtx.beginPath();
-  overlayCtx.moveTo(0, -sh / 2);
-  overlayCtx.lineTo(0, rotY);
+  overlayCtx.moveTo(box.mx, box.y1);
+  overlayCtx.lineTo(box.mx, box.rotY);
   overlayCtx.stroke();
 
-  const drawHandle = (hx, hy, r = 12, isRot = false) => {
+  const drawHandle = (hx, hy, r, isHovered, isRot = false) => {
     overlayCtx.save();
-    overlayCtx.shadowColor = 'rgba(0, 0, 0, 0.45)';
-    overlayCtx.shadowBlur = 6;
+    overlayCtx.shadowColor = 'rgba(0, 0, 0, 0.55)';
+    overlayCtx.shadowBlur = 8;
     overlayCtx.shadowOffsetY = 2;
+
+    if (isHovered) {
+      overlayCtx.beginPath();
+      overlayCtx.arc(hx, hy, r + 6, 0, Math.PI * 2);
+      overlayCtx.fillStyle = 'rgba(56, 163, 255, 0.32)';
+      overlayCtx.fill();
+    }
+
     overlayCtx.beginPath();
-    overlayCtx.arc(hx, hy, r, 0, Math.PI * 2);
-    overlayCtx.fillStyle = isRot ? '#7cc4ff' : '#ffffff';
+    overlayCtx.arc(hx, hy, isHovered ? r + 2 : r, 0, Math.PI * 2);
+    overlayCtx.fillStyle = isHovered ? '#ffcf40' : isRot ? '#7cc4ff' : '#ffffff';
     overlayCtx.fill();
     overlayCtx.lineWidth = 3.5;
-    overlayCtx.strokeStyle = '#1472ff';
+    overlayCtx.strokeStyle = isHovered ? '#111827' : '#1472ff';
     overlayCtx.stroke();
     overlayCtx.restore();
   };
 
-  for (const hPos of getHandlePositions(sw, sh)) {
-    drawHandle(hPos.x, hPos.y, hPos.id.length === 2 ? 12 : 9.5);
+  for (const hPos of box.handles) {
+    drawHandle(
+      hPos.x,
+      hPos.y,
+      hPos.isCorner ? 13.5 : 10,
+      hoveredHandleId === hPos.id,
+      false
+    );
   }
-  drawHandle(0, rotY, 12, true);
+  drawHandle(box.mx, box.rotY, 13, hoveredHandleId === 'rotate', true);
 
   overlayCtx.restore();
 }
@@ -1548,28 +1592,30 @@ function pointToLayerLocal(pt, layer) {
 
 function hitTestLayerHandles(pt, layer) {
   if (!layer || !layer.visible) return null;
-  const { w, h } = getLayerBaseDimensions(layer);
-  const sw = w * (layer.scale ?? 1);
-  const sh = h * (layer.scale ?? 1);
+  const box = getLayerBoxAndHandles(layer);
   const { lx, ly } = pointToLayerLocal(pt, layer);
 
-  // 1. Check top rotation handle (generous 38px hit radius in 1024-space)
-  if (state.showHandles && Math.hypot(lx, ly - (-sh / 2 - 44)) < 38) {
-    return { mode: 'rotate', cursor: 'crosshair' };
+  // 1. Check top rotation handle (generous 46px hit radius in 1024-space)
+  if (state.showHandles && Math.hypot(lx - box.mx, ly - box.rotY) < 46) {
+    return { mode: 'rotate', handle: 'rotate', cursor: 'crosshair' };
   }
 
-  // 2. Check 8 resize handles (4 corners + 4 midpoints)
+  // 2. Check 8 resize handles (4 corners + 4 midpoints) — check corners first!
   if (state.showHandles) {
-    for (const hPos of getHandlePositions(sw, sh)) {
-      if (Math.hypot(lx - hPos.x, ly - hPos.y) < 38) {
+    const ordered = [
+      ...box.handles.filter((h) => h.isCorner),
+      ...box.handles.filter((h) => !h.isCorner),
+    ];
+    for (const hPos of ordered) {
+      if (Math.hypot(lx - hPos.x, ly - hPos.y) < 46) {
         return { mode: 'scale', handle: hPos.id, cursor: hPos.cursor };
       }
     }
   }
 
   // 3. Check inside layer bounding box
-  if (Math.abs(lx) <= sw / 2 + 16 && Math.abs(ly) <= sh / 2 + 16) {
-    return { mode: 'move', cursor: 'grab' };
+  if (lx >= box.x1 - 20 && lx <= box.x2 + 20 && ly >= box.y1 - 20 && ly <= box.y2 + 20) {
+    return { mode: 'move', handle: 'move', cursor: 'grab' };
   }
 
   return null;
@@ -1597,25 +1643,12 @@ el.overlayCanvas.addEventListener('pointerdown', (e) => {
     }
   }
 
-  // If clicked outside all layers on the margin, toggle handles or allow dragging active layer if inside squircle
+  // If clicked outside the layer box, never hide the handles — just default to moving the active layer!
   if (!hit) {
     if (layer && layer.visible) {
-      // Allow moving active layer if clicked anywhere inside the 824x824 squircle
-      const inSquircle =
-        pt.x >= HIG.MARGIN &&
-        pt.x <= HIG.CANVAS_SIZE - HIG.MARGIN &&
-        pt.y >= HIG.MARGIN &&
-        pt.y <= HIG.CANVAS_SIZE - HIG.MARGIN;
-      if (inSquircle) {
-        state.showHandles = true;
-        hit = { mode: 'move', cursor: 'grab' };
-        syncAllUI();
-      } else {
-        state.showHandles = false;
-        syncAllUI();
-        renderOverlay();
-        return;
-      }
+      state.showHandles = true;
+      hit = { mode: 'move', handle: 'move', cursor: 'grab' };
+      syncAllUI();
     } else {
       return;
     }
@@ -1625,6 +1658,7 @@ el.overlayCanvas.addEventListener('pointerdown', (e) => {
   layer.isStarter = false;
   isDragging = true;
   dragMode = hit.mode;
+  hoveredHandleId = hit.handle;
   el.overlayCanvas.setPointerCapture(e.pointerId);
 
   const cx = HIG.CANVAS_SIZE / 2 + (layer.x || 0);
@@ -1637,7 +1671,7 @@ el.overlayCanvas.addEventListener('pointerdown', (e) => {
     ly: layer.y || 0,
     scale: layer.scale ?? 1,
     rot: layer.rotation || 0,
-    dist: Math.max(16, Math.hypot(pt.x - cx, pt.y - cy)),
+    dist: Math.max(24, Math.hypot(pt.x - cx, pt.y - cy)),
     angle: Math.atan2(pt.y - cy, pt.x - cx),
   };
   renderOverlay();
@@ -1653,7 +1687,12 @@ el.overlayCanvas.addEventListener('pointermove', (e) => {
 
   if (!isDragging) {
     const hit = hitTestLayerHandles(pt, layer);
-    el.overlayCanvas.style.cursor = hit ? hit.cursor : 'default';
+    const nextHover = hit?.handle || null;
+    el.overlayCanvas.style.cursor = hit ? hit.cursor : 'grab';
+    if (nextHover !== hoveredHandleId) {
+      hoveredHandleId = nextHover;
+      renderOverlay();
+    }
     return;
   }
 
@@ -1698,13 +1737,19 @@ function endCanvasDrag(e) {
   activeSnapGuides = { x: false, y: false };
   try {
     if (e && e.pointerId != null) el.overlayCanvas.releasePointerCapture(e.pointerId);
-  } catch (_) {}
+  } catch (_) { }
   pushHistory();
   renderOverlay();
 }
 
 el.overlayCanvas.addEventListener('pointerup', endCanvasDrag);
 el.overlayCanvas.addEventListener('pointercancel', endCanvasDrag);
+el.overlayCanvas.addEventListener('pointerleave', () => {
+  if (!isDragging && hoveredHandleId !== null) {
+    hoveredHandleId = null;
+    renderOverlay();
+  }
+});
 
 el.overlayCanvas.addEventListener(
   'wheel',
