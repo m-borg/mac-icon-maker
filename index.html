@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Icon Studio — macOS 26 Liquid Glass Icon Maker</title>
+  <meta name="description" content="Create modern macOS 26 (Tahoe) Liquid Glass app icons following Apple HIG. Drop images, adjust gradients and specular glass, preview in Dock, and export .icns, .iconset.zip, and PNG." />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Ambient Tahoe desktop wallpaper backdrop -->
+  <div class="ambient-wallpaper" aria-hidden="true">
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+    <div class="orb orb-3"></div>
+  </div>
+
+  <!-- Global Drop Overlay -->
+  <div id="globalDropOverlay" class="drop-overlay hidden" aria-hidden="true">
+    <div class="drop-overlay-card">
+      <div class="drop-overlay-squircle">
+        <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 16V4M12 4L7 9M12 4L17 9" />
+          <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" />
+        </svg>
+      </div>
+      <h2>Drop Image to Add Layer</h2>
+      <p>PNG, SVG, JPG, WebP · Auto-aligns to Apple 824×824 Squircle</p>
+    </div>
+  </div>
+
+  <div class="app-shell">
+    <!-- Top Liquid Glass Toolbar -->
+    <header class="toolbar glass-panel">
+      <div class="toolbar-left">
+        <div class="window-lights" aria-hidden="true">
+          <span class="light red"></span>
+          <span class="light yellow"></span>
+          <span class="light green"></span>
+        </div>
+        <div class="brand">
+          <div class="brand-badge">
+            <canvas id="brandMiniCanvas" width="48" height="48"></canvas>
+          </div>
+          <div class="brand-text">
+            <span class="brand-title">macOS 26 Icon Studio</span>
+            <span class="brand-sub">Tahoe HIG · 1024×1024 · R185.4</span>
+          </div>
+        </div>
+        <div class="divider-v"></div>
+        <label class="icon-name-field" title="Export filename">
+          <span class="field-prefix">Name</span>
+          <input id="iconNameInput" type="text" value="AppIcon" maxlength="40" spellcheck="false" />
+        </label>
+        <div class="btn-group">
+          <button id="undoBtn" class="icon-btn" title="Undo (⌘Z)" disabled>
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
+          </button>
+          <button id="redoBtn" class="icon-btn" title="Redo (⌘⇧Z)" disabled>
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="toolbar-center">
+        <div class="segmented-control" id="appearanceControl" role="group" aria-label="System Appearance">
+          <button class="seg-btn active" data-appearance="default">Default</button>
+          <button class="seg-btn" data-appearance="dark">Dark</button>
+          <button class="seg-btn" data-appearance="clear">Clear</button>
+          <button class="seg-btn" data-appearance="tinted">Tinted</button>
+        </div>
+        <div id="tintColorBar" class="tint-bar hidden">
+          <input id="tintColorInput" type="color" value="#3b82f6" title="System Tint Color" />
+        </div>
+      </div>
+
+      <div class="toolbar-right">
+        <button id="gridToggleBtn" class="pill-btn" title="Toggle Apple HIG 824×824 Squircle Grid (G)">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M3 12h18M12 3v18"/></svg>
+          <span>HIG Grid</span>
+        </button>
+        <button id="helpBtn" class="pill-btn" title="How to apply icons in macOS 26">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r=".5" fill="currentColor"/></svg>
+          <span>Apply Guide</span>
+        </button>
+        <div class="divider-v"></div>
+        <div class="export-cluster">
+          <button id="exportIcnsBtn" class="primary-btn" title="Download macOS .icns bundle">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+            <span>.icns</span>
+          </button>
+          <button id="exportIconsetBtn" class="secondary-btn" title="Download Xcode .iconset.zip (all 10 sizes)">
+            <span>.iconset</span>
+          </button>
+          <button id="exportPngBtn" class="secondary-btn" title="Download 1024×1024 PNG">
+            <span>PNG</span>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main 3-Pane Studio Workspace -->
+    <main class="workspace">
+      <!-- Left Inspector: Artwork & Layers -->
+      <aside class="sidebar sidebar-left glass-panel">
+        <div class="panel-scroll">
+          <!-- Drop / Import Zone -->
+          <section class="inspector-section">
+            <div id="dropZone" class="drop-zone" tabindex="0">
+              <input id="fileInput" type="file" accept="image/*" multiple hidden />
+              <div class="drop-zone-icon">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="3" width="18" height="18" rx="4" />
+                  <circle cx="8.5" cy="8.5" r="1.5" />
+                  <path d="M21 15l-5-5L5 21" />
+                </svg>
+              </div>
+              <div class="drop-zone-copy">
+                <strong>Drop image or paste (⌘V)</strong>
+                <span>PNG, SVG, JPG, WebP</span>
+              </div>
+            </div>
+            <div class="quick-add-row">
+              <button id="addSymbolBtn" class="subtle-btn">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15 9 22 9.3 16.5 14 18.2 21 12 17.3 5.8 21 7.5 14 2 9.3 9 9 12 2"/></svg>
+                <span>+ Vector Glyph</span>
+              </button>
+              <button id="addTextBtn" class="subtle-btn">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>
+                <span>+ Text / Emoji</span>
+              </button>
+            </div>
+          </section>
+
+          <!-- Layers Stack -->
+          <section class="inspector-section">
+            <div class="section-header">
+              <h3>Layers</h3>
+              <span id="layerCountBadge" class="badge">1</span>
+            </div>
+            <ul id="layersList" class="layers-list"></ul>
+          </section>
+
+          <!-- Active Layer Properties -->
+          <section id="layerControlsSection" class="inspector-section">
+            <div class="section-header">
+              <h3>Layer Settings</h3>
+              <div class="section-actions">
+                <button id="centerLayerBtn" class="mini-pill" title="Center layer at (0, 0)">Center</button>
+                <button id="resetLayerBtn" class="mini-pill" title="Reset transforms">Reset</button>
+              </div>
+            </div>
+
+            <!-- 1-Click macOS 26 Fit Modes -->
+            <div class="fit-mode-group">
+              <button id="fitGlyphBtn" class="fit-pill" title="Fit cleanly inside 624×624 safe zone">
+                <span class="fit-icon">◎</span>
+                <span>Floating Glyph</span>
+              </button>
+              <button id="fitFullBleedBtn" class="fit-pill" title="Un-jail: fill entire 824×824 squircle edge-to-edge">
+                <span class="fit-icon">▣</span>
+                <span>Fill Squircle</span>
+              </button>
+            </div>
+
+            <!-- Image-specific Smart Tools -->
+            <div id="imageToolsBox" class="sub-box hidden">
+              <div class="sub-box-label">Smart Image Tools</div>
+              <div class="tool-btn-grid">
+                <button id="autoTrimBtn" class="subtle-btn" title="Trim transparent padding around logo">Auto-Trim</button>
+                <button id="extractPaletteBtn" class="subtle-btn" title="Match background gradient to image colors">Match Gradient</button>
+              </div>
+              <div class="toggle-row">
+                <label class="switch-label">
+                  <input id="removeBgToggle" type="checkbox" />
+                  <span>Remove Solid Background</span>
+                </label>
+                <input id="removeBgColor" type="color" value="#ffffff" title="Color to remove" />
+              </div>
+              <div id="removeBgToleranceRow" class="slider-row hidden">
+                <div class="slider-label">
+                  <span>Tolerance</span>
+                  <span id="removeBgTolVal">28</span>
+                </div>
+                <input id="removeBgTolerance" type="range" min="4" max="120" value="28" />
+              </div>
+            </div>
+
+            <!-- Symbol Picker (when symbol layer selected) -->
+            <div id="symbolToolsBox" class="sub-box hidden">
+              <div class="sub-box-label">Vector Glyph</div>
+              <div id="glyphPickerGrid" class="glyph-grid"></div>
+              <div class="color-inline-row">
+                <span>Fill Color</span>
+                <div class="color-controls">
+                  <input id="symbolColorInput" type="color" value="#ffffff" />
+                  <label class="switch-label compact">
+                    <input id="symbolGradientToggle" type="checkbox" />
+                    <span>Silver Glass</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <!-- Text / Emoji Editor (when text layer selected) -->
+            <div id="textToolsBox" class="sub-box hidden">
+              <div class="sub-box-label">Text or Emoji</div>
+              <input id="textContentInput" type="text" class="text-input" value="A" maxlength="16" />
+              <div class="color-inline-row">
+                <span>Color &amp; Weight</span>
+                <div class="color-controls">
+                  <input id="textColorInput" type="color" value="#ffffff" />
+                  <select id="textWeightSelect" class="select-input">
+                    <option value="700">Bold</option>
+                    <option value="800">Heavy</option>
+                    <option value="500">Medium</option>
+                    <option value="300">Light</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <!-- Geometry Transforms -->
+            <div class="slider-row">
+              <div class="slider-label">
+                <span>Scale</span>
+                <span id="layerScaleVal">100%</span>
+              </div>
+              <input id="layerScaleSlider" type="range" min="10" max="300" value="100" />
+            </div>
+
+            <div class="slider-row">
+              <div class="slider-label">
+                <span>Rotation</span>
+                <span id="layerRotVal">0°</span>
+              </div>
+              <input id="layerRotSlider" type="range" min="-180" max="180" value="0" />
+            </div>
+
+            <div class="slider-row">
+              <div class="slider-label">
+                <span>Opacity</span>
+                <span id="layerOpacityVal">100%</span>
+              </div>
+              <input id="layerOpacitySlider" type="range" min="0" max="100" value="100" />
+            </div>
+
+            <div class="slider-row">
+              <div class="slider-label">
+                <span>Layer Corner Clip</span>
+                <span id="layerRadiusVal">0%</span>
+              </div>
+              <input id="layerRadiusSlider" type="range" min="0" max="50" value="0" />
+            </div>
+
+            <div class="dual-btn-row">
+              <button id="flipXBtn" class="subtle-btn">Flip Horizontal</button>
+              <button id="flipYBtn" class="subtle-btn">Flip Vertical</button>
+            </div>
+
+            <!-- Layer 3D Shadow & Glass Bevel -->
+            <div class="sub-box">
+              <div class="toggle-row">
+                <label class="switch-label">
+                  <input id="layerShadowToggle" type="checkbox" checked />
+                  <span>3D Glyph Elevation Shadow</span>
+                </label>
+              </div>
+              <div id="layerShadowControls" class="slider-row">
+                <div class="slider-label">
+                  <span>Shadow Depth</span>
+                  <span id="layerShadowVal">24px</span>
+                </div>
+                <input id="layerShadowSlider" type="range" min="0" max="64" value="24" />
+              </div>
+              <div class="toggle-row">
+                <label class="switch-label">
+                  <input id="layerGlassToggle" type="checkbox" />
+                  <span>Liquid Glass Glyph Sheen</span>
+                </label>
+              </div>
+            </div>
+          </section>
+        </div>
+      </aside>
+
+      <!-- Center Stage: Interactive Canvas + Live Dock & Apps Grid -->
+      <section class="stage">
+        <!-- Stage Top Bar -->
+        <div class="stage-bar">
+          <div class="segmented-control compact" id="stageViewControl">
+            <button class="seg-btn active" data-view="editor">Canvas</button>
+            <button class="seg-btn" data-view="apps">Apps Grid</button>
+            <button class="seg-btn" data-view="sizes">Sizes &amp; Finder</button>
+          </div>
+          <div class="stage-backdrop-pills" id="backdropControl" title="Canvas preview backdrop">
+            <button class="dot-pill active" data-backdrop="tahoe" title="Tahoe Wallpaper"></button>
+            <button class="dot-pill" data-backdrop="dark" title="Dark Desktop"></button>
+            <button class="dot-pill" data-backdrop="checker" title="Transparency Checkerboard"></button>
+            <button class="dot-pill" data-backdrop="light" title="Light Desktop"></button>
+          </div>
+        </div>
+
+        <!-- View 1: Interactive 1024x1024 Canvas Editor -->
+        <div id="editorView" class="stage-view active">
+          <div id="canvasFrame" class="canvas-frame backdrop-tahoe">
+            <canvas id="mainCanvas" width="1024" height="1024"></canvas>
+            <canvas id="overlayCanvas" width="1024" height="1024"></canvas>
+            <div id="canvasHint" class="canvas-hint">Drag to move · Scroll to scale · Drop image anywhere</div>
+          </div>
+        </div>
+
+        <!-- View 2: macOS 26 Apps Grid Preview -->
+        <div id="appsView" class="stage-view">
+          <div class="apps-grid-card glass-panel">
+            <div class="apps-grid-header">
+              <span>macOS 26 Apps Grid Preview</span>
+              <span class="muted">Compare squircle geometry, shadow &amp; Liquid Glass contrast</span>
+            </div>
+            <div id="appsGridContainer" class="apps-grid"></div>
+          </div>
+        </div>
+
+        <!-- View 3: Multi-Resolution Sizes & Finder Get Info Preview -->
+        <div id="sizesView" class="stage-view">
+          <div class="sizes-card glass-panel">
+            <div class="sizes-grid" id="sizesPreviewGrid"></div>
+            <div class="finder-preview-box">
+              <div class="finder-titlebar">
+                <span class="light red"></span><span class="light yellow"></span><span class="light green"></span>
+                <span class="finder-title"><span id="finderAppTitle">AppIcon</span>.app Info</span>
+              </div>
+              <div class="finder-body">
+                <div class="finder-header-row">
+                  <canvas id="finderIconCanvas" width="128" height="128" class="finder-icon-target"></canvas>
+                  <div class="finder-meta">
+                    <strong id="finderAppName">AppIcon.app</strong>
+                    <span>Application — 1024 × 1024 px</span>
+                    <span class="muted">Drag your exported <code>.icns</code> onto the top-left icon in Finder Info (⌘I)</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Live macOS 26 Liquid Glass Dock Preview -->
+        <div class="dock-wrapper">
+          <div class="dock-bar" id="liveDock">
+            <div class="dock-item" data-label="Finder"><div class="dock-svg finder-icon"></div></div>
+            <div class="dock-item" data-label="Safari"><div class="dock-svg safari-icon"></div></div>
+            <div class="dock-item" data-label="Messages"><div class="dock-svg messages-icon"></div></div>
+            <div class="dock-item dock-item-user" data-label="AppIcon">
+              <canvas id="dockUserCanvas" width="128" height="128"></canvas>
+            </div>
+            <div class="dock-item" data-label="Mail"><div class="dock-svg mail-icon"></div></div>
+            <div class="dock-item" data-label="Music"><div class="dock-svg music-icon"></div></div>
+            <div class="dock-sep"></div>
+            <div class="dock-item" data-label="Settings"><div class="dock-svg settings-icon"></div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Inspector: Background Gradients & Liquid Glass Material -->
+      <aside class="sidebar sidebar-right glass-panel">
+        <div class="panel-scroll">
+          <!-- Presets -->
+          <section class="inspector-section">
+            <div class="section-header">
+              <h3>macOS 26 Presets</h3>
+              <button id="randomPresetBtn" class="mini-pill">Surprise</button>
+            </div>
+            <div id="presetsGrid" class="presets-grid"></div>
+          </section>
+
+          <!-- Background & Gradient -->
+          <section class="inspector-section">
+            <div class="section-header">
+              <h3>Background Gradient</h3>
+              <button id="reverseStopsBtn" class="mini-pill" title="Flip gradient colors">Flip</button>
+            </div>
+            <div class="segmented-control compact" id="bgTypeControl">
+              <button class="seg-btn active" data-bgtype="mesh">Mesh</button>
+              <button class="seg-btn" data-bgtype="linear">Linear</button>
+              <button class="seg-btn" data-bgtype="radial">Radial</button>
+              <button class="seg-btn" data-bgtype="conic">Conic</button>
+              <button class="seg-btn" data-bgtype="solid">Solid</button>
+            </div>
+
+            <div id="bgAngleRow" class="slider-row">
+              <div class="slider-label">
+                <span>Angle</span>
+                <span id="bgAngleVal">145°</span>
+              </div>
+              <input id="bgAngleSlider" type="range" min="0" max="360" value="145" />
+            </div>
+
+            <div id="stopsList" class="stops-list"></div>
+            <button id="addStopBtn" class="subtle-btn full-width">+ Add Color Stop</button>
+          </section>
+
+          <!-- Liquid Glass Material Controls -->
+          <section class="inspector-section">
+            <div class="section-header">
+              <h3>Liquid Glass Material</h3>
+              <button id="resetGlassBtn" class="mini-pill">HIG Default</button>
+            </div>
+
+            <div class="slider-row">
+              <div class="slider-label">
+                <span>Specular Rim Edge</span>
+                <span id="rimIntensityVal">88%</span>
+              </div>
+              <input id="rimIntensitySlider" type="range" min="0" max="100" value="88" />
+            </div>
+
+            <div class="slider-row">
+              <div class="slider-label">
+                <span>Rim Thickness</span>
+                <span id="rimWidthVal">5.0px</span>
+              </div>
+              <input id="rimWidthSlider" type="range" min="1" max="14" step="0.5" value="5" />
+            </div>
+
+            <div class="slider-row">
+              <div class="slider-label">
+                <span>Top Glass Sheen</span>
+                <span id="glassSheenVal">34%</span>
+              </div>
+              <input id="glassSheenSlider" type="range" min="0" max="100" value="34" />
+            </div>
+
+            <div class="slider-row">
+              <div class="slider-label">
+                <span>Inner Depth Glow</span>
+                <span id="innerGlowVal">42%</span>
+              </div>
+              <input id="innerGlowSlider" type="range" min="0" max="100" value="42" />
+            </div>
+
+            <div class="slider-row">
+              <div class="slider-label">
+                <span>Frosted Grain</span>
+                <span id="bgNoiseVal">4%</span>
+              </div>
+              <input id="bgNoiseSlider" type="range" min="0" max="35" value="4" />
+            </div>
+          </section>
+
+          <!-- Apple HIG Geometry & Outer Shadow -->
+          <section class="inspector-section">
+            <div class="section-header">
+              <h3>Squircle &amp; HIG Shadow</h3>
+              <button id="resetHigBtn" class="mini-pill">Apple HIG</button>
+            </div>
+
+            <div class="slider-row">
+              <div class="slider-label">
+                <span>Corner Radius</span>
+                <span id="cornerRadiusVal">185.4px</span>
+              </div>
+              <input id="cornerRadiusSlider" type="range" min="0" max="300" step="0.5" value="185.4" />
+            </div>
+
+            <div class="slider-row">
+              <div class="slider-label">
+                <span>Curvature Smoothing</span>
+                <span id="smoothingVal">60%</span>
+              </div>
+              <input id="smoothingSlider" type="range" min="0" max="100" value="60" />
+            </div>
+
+            <div class="toggle-row">
+              <label class="switch-label">
+                <input id="outerShadowToggle" type="checkbox" checked />
+                <span>Apple HIG Outer Drop Shadow</span>
+              </label>
+            </div>
+          </section>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <!-- How to Apply Modal -->
+  <div id="helpModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="helpModalTitle">
+    <div class="modal-card glass-panel">
+      <div class="modal-header">
+        <h2 id="helpModalTitle">How to Apply Your Icon in macOS 26</h2>
+        <button id="closeHelpBtn" class="icon-btn" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="guide-step">
+          <div class="step-num">1</div>
+          <div>
+            <h4>Replace any Mac App Icon via Finder</h4>
+            <p>Export your icon as <strong>.icns</strong>, open <strong>Applications</strong> in Finder, select any app, and press <kbd>⌘I</kbd> (Get Info). Drag your downloaded <code>.icns</code> file directly onto the small app icon in the top-left corner of the Info window.</p>
+          </div>
+        </div>
+        <div class="guide-step">
+          <div class="step-num">2</div>
+          <div>
+            <h4>Use in Xcode or Icon Composer</h4>
+            <p>Export <strong>.iconset</strong> to download a complete 10-size folder ready for Xcode Asset Catalogs or <code>iconutil -c icns</code>, or export a <strong>1024×1024 PNG</strong> to drop directly into Apple’s Icon Composer.</p>
+          </div>
+        </div>
+        <div class="guide-step">
+          <div class="step-num">3</div>
+          <div>
+            <h4>macOS 26 HIG Spec Checklist</h4>
+            <p>Your icon is automatically composed inside an <strong>824×824 px</strong> continuous-curvature squircle (<strong>R 185.4 px</strong>) centered on a <strong>1024×1024 px</strong> canvas with a <strong>100 px</strong> margin and Apple’s official <code>Y+12 / Blur 28</code> drop shadow—so macOS 26 will never force it into an automatic gray container.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="toast hidden" role="status"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
