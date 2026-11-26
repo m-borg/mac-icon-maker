@@ -1,12 +1,12 @@
-import { HIG, traceAppleSquircle, drawHIGGrid } from './squircle.js?v=4';
-import { GRADIENT_PRESETS, VECTOR_GLYPHS } from './presets.js?v=4';
+import { HIG, traceAppleSquircle, drawHIGGrid } from './squircle.js?v=5';
+import { GRADIENT_PRESETS, VECTOR_GLYPHS } from './presets.js?v=5';
 import {
   generateICNSBlob,
   generateIconsetZipBlob,
   generatePNGBlob,
   downsampleCanvas,
   triggerDownload,
-} from './exporters.js?v=4';
+} from './exporters.js?v=5';
 
 // In-memory store for non-serializable image assets keyed by assetId
 const imageAssetStore = new Map();
@@ -297,6 +297,7 @@ function getSelectedLayer() {
 
 /**
  * Computes base unscaled bounding box (width, height) in 1024-space for any layer.
+ * Always fits inside a 620x620 box at scale=1 so all 4 corners are visible inside the canvas.
  */
 function getLayerBaseDimensions(layer) {
   if (layer.type === 'image') {
@@ -304,11 +305,7 @@ function getLayerBaseDimensions(layer) {
     if (!asset) return { w: 480, h: 480 };
     const iw = asset.canvas.width;
     const ih = asset.canvas.height;
-    if (layer.fitMode === 'fullBleed') {
-      const coverScale = Math.max(HIG.SQUIRCLE_SIZE / iw, HIG.SQUIRCLE_SIZE / ih);
-      return { w: iw * coverScale, h: ih * coverScale };
-    }
-    const maxGlyph = 520;
+    const maxGlyph = 600;
     const containScale = Math.min(maxGlyph / iw, maxGlyph / ih);
     return { w: iw * containScale, h: ih * containScale };
   }
@@ -316,6 +313,20 @@ function getLayerBaseDimensions(layer) {
     return { w: 460, h: 460 };
   }
   return { w: 480, h: 480 };
+}
+
+function getLayerScaledSize(layer) {
+  const { w, h } = getLayerBaseDimensions(layer);
+  const sx = layer.scaleX ?? layer.scale ?? 1;
+  const sy = layer.scaleY ?? layer.scale ?? 1;
+  return {
+    baseW: w,
+    baseH: h,
+    scaleX: sx,
+    scaleY: sy,
+    sw: Math.max(16, w * sx),
+    sh: Math.max(16, h * sy),
+  };
 }
 
 /**
@@ -575,11 +586,10 @@ function renderBackground(ctx, x, y, w, h) {
 }
 
 function renderLayer(ctx, layer, center) {
-  const { w, h } = getLayerBaseDimensions(layer);
-  const scale = Math.max(0.05, layer.scale ?? 1);
-  // Render at actual scaled 1024-canvas pixel dimensions so scaled-up images/vectors/text never blur!
-  const drawW = Math.max(4, w * scale);
-  const drawH = Math.max(4, h * scale);
+  const { sw, sh, scaleY } = getLayerScaledSize(layer);
+  const drawW = Math.max(4, sw);
+  const drawH = Math.max(4, sh);
+  const scale = Math.max(0.05, scaleY);
 
   const temp = document.createElement('canvas');
   const pad = 96;
@@ -752,7 +762,20 @@ function renderLiquidGlassOverlays(ctx, x, y, w, h, radius, smoothing) {
 
 // Snap state for visual alignment guides
 let activeSnapGuides = { x: false, y: false };
-let isCanvasFocused = false;
+let isTransformActive = true;
+
+function getPhotoshopHandles(sw, sh) {
+  return [
+    { id: 'nw', sx: -1, sy: -1, x: -sw / 2, y: -sh / 2, cursor: 'nwse-resize' },
+    { id: 'n', sx: 0, sy: -1, x: 0, y: -sh / 2, cursor: 'ns-resize' },
+    { id: 'ne', sx: 1, sy: -1, x: sw / 2, y: -sh / 2, cursor: 'nesw-resize' },
+    { id: 'e', sx: 1, sy: 0, x: sw / 2, y: 0, cursor: 'ew-resize' },
+    { id: 'se', sx: 1, sy: 1, x: sw / 2, y: sh / 2, cursor: 'nwse-resize' },
+    { id: 's', sx: 0, sy: 1, x: 0, y: sh / 2, cursor: 'ns-resize' },
+    { id: 'sw', sx: -1, sy: 1, x: -sw / 2, y: sh / 2, cursor: 'nesw-resize' },
+    { id: 'w', sx: -1, sy: 0, x: -sw / 2, y: 0, cursor: 'ew-resize' },
+  ];
+}
 
 function renderOverlay() {
   const S = HIG.CANVAS_SIZE;
@@ -786,13 +809,12 @@ function renderOverlay() {
     overlayCtx.restore();
   }
 
-  // Active layer selection handles (visible when hovering/focusing canvas)
+  // Photoshop-style Free Transform box: shown whenever a layer is selected (isTransformActive),
+  // never flickers on mouse hover/leave; hides only when clicking outside the layer or pressing Esc/Enter.
   const layer = getSelectedLayer();
-  if (!layer || !layer.visible || !isCanvasFocused) return;
+  if (!layer || !layer.visible || !isTransformActive) return;
 
-  const { w, h } = getLayerBaseDimensions(layer);
-  const sw = w * (layer.scale ?? 1);
-  const sh = h * (layer.scale ?? 1);
+  const { sw, sh } = getLayerScaledSize(layer);
   const cx = S / 2 + (layer.x || 0);
   const cy = S / 2 + (layer.y || 0);
   const rot = ((layer.rotation || 0) * Math.PI) / 180;
@@ -801,31 +823,39 @@ function renderOverlay() {
   overlayCtx.translate(cx, cy);
   overlayCtx.rotate(rot);
 
-  overlayCtx.strokeStyle = 'rgba(96, 185, 255, 0.85)';
-  overlayCtx.lineWidth = 2.5;
+  // Subtle dark outer line + crisp Photoshop cyan-blue 2px transform frame
+  overlayCtx.strokeStyle = 'rgba(0, 0, 0, 0.35)';
+  overlayCtx.lineWidth = 4;
   overlayCtx.strokeRect(-sw / 2, -sh / 2, sw, sh);
 
-  // Rotation stem & knob
+  overlayCtx.strokeStyle = '#18a0fb';
+  overlayCtx.lineWidth = 2;
+  overlayCtx.strokeRect(-sw / 2, -sh / 2, sw, sh);
+
+  // Rotation stem & top handle
   overlayCtx.beginPath();
   overlayCtx.moveTo(0, -sh / 2);
-  overlayCtx.lineTo(0, -sh / 2 - 36);
+  overlayCtx.lineTo(0, -sh / 2 - 34);
   overlayCtx.stroke();
 
-  const drawHandle = (hx, hy, r = 9) => {
-    overlayCtx.beginPath();
-    overlayCtx.arc(hx, hy, r, 0, Math.PI * 2);
+  // Small, crisp Photoshop square anchor points (14x14 in 1024-space = ~7x7px on screen)
+  const hs = 14;
+  for (const h of getPhotoshopHandles(sw, sh)) {
     overlayCtx.fillStyle = '#ffffff';
-    overlayCtx.fill();
-    overlayCtx.lineWidth = 3;
-    overlayCtx.strokeStyle = '#1d84ff';
-    overlayCtx.stroke();
-  };
+    overlayCtx.strokeStyle = '#18a0fb';
+    overlayCtx.lineWidth = 2.5;
+    overlayCtx.fillRect(h.x - hs / 2, h.y - hs / 2, hs, hs);
+    overlayCtx.strokeRect(h.x - hs / 2, h.y - hs / 2, hs, hs);
+  }
 
-  drawHandle(-sw / 2, -sh / 2);
-  drawHandle(sw / 2, -sh / 2);
-  drawHandle(sw / 2, sh / 2);
-  drawHandle(-sw / 2, sh / 2);
-  drawHandle(0, -sh / 2 - 38, 10);
+  // Top rotation circle
+  overlayCtx.beginPath();
+  overlayCtx.arc(0, -sh / 2 - 36, 8, 0, Math.PI * 2);
+  overlayCtx.fillStyle = '#ffffff';
+  overlayCtx.fill();
+  overlayCtx.lineWidth = 2.5;
+  overlayCtx.strokeStyle = '#18a0fb';
+  overlayCtx.stroke();
 
   overlayCtx.restore();
 }
@@ -1184,7 +1214,7 @@ function syncLayersUI() {
     li.append(thumb, nameSpan, actions);
     li.addEventListener('click', () => {
       state.selectedLayerId = layer.id;
-      state.showHandles = true;
+      isTransformActive = true;
       syncAllUI();
       renderOverlay();
     });
@@ -1346,8 +1376,11 @@ function loadImageFile(file) {
       const cleanName = file.name.replace(/\.[^.]+$/, '') || 'Dropped Image';
 
       // Remove untouched default starter symbol when user drops their first image
-      // (even if they already clicked presets or sliders!)
       state.layers = state.layers.filter((l) => !l.isStarter);
+
+      // Fit uploaded image cleanly inside the 824x824 squircle so all 4 corners are always visible on-canvas
+      const isNearSquare = Math.abs(c.width - c.height) / Math.max(c.width, c.height) < 0.08;
+      const initialScale = isOpaqueRect ? (isNearSquare ? 824 / 600 : 760 / 600) : 1;
 
       const newLayer = {
         id: uid('layer'),
@@ -1357,13 +1390,15 @@ function loadImageFile(file) {
         assetId,
         x: 0,
         y: 0,
-        scale: 1,
+        scale: initialScale,
+        scaleX: initialScale,
+        scaleY: initialScale,
         rotation: 0,
         flipX: false,
         flipY: false,
         opacity: 1,
         cornerRadius: 0,
-        fitMode: isOpaqueRect ? 'fullBleed' : 'glyph',
+        fitMode: isOpaqueRect && isNearSquare ? 'fullBleed' : 'glyph',
         shadow: { enabled: !isOpaqueRect, blur: 24, opacity: 0.35, offsetY: 12 },
         glassEffect: false,
         removeBg: { enabled: false, color: cornerHex, tolerance: 28 },
@@ -1371,15 +1406,11 @@ function loadImageFile(file) {
 
       state.layers.push(newLayer);
       state.selectedLayerId = newLayer.id;
-      state.showHandles = true;
+      isTransformActive = true;
       pushHistory();
       syncAllUI();
       renderAll();
-      showToast(
-        isOpaqueRect
-          ? `Added "${cleanName}" in Fill Squircle mode`
-          : `Added "${cleanName}" as Floating Glyph`
-      );
+      showToast(`Added "${cleanName}" — drag corners to resize`);
     };
     img.src = reader.result;
   };
@@ -1500,12 +1531,12 @@ function extractGradientFromSelectedImage() {
 }
 
 // ==========================================
-// On-Canvas Direct Manipulation (Drag, Scale, Rotate, Snap)
+// Photoshop-Style Free Transform (Select, Move, Corner/Edge Scale, Rotate)
 // ==========================================
 
 let isDragging = false;
 let dragMode = null; // 'move' | 'scale' | 'rotate'
-let dragStart = { px: 0, py: 0, lx: 0, ly: 0, scale: 1, rot: 0, dist: 1, angle: 0 };
+let dragStart = null;
 
 function clientToCanvas1024(e) {
   const rect = el.overlayCanvas.getBoundingClientRect();
@@ -1528,87 +1559,136 @@ function pointToLayerLocal(pt, layer) {
   };
 }
 
-function hitTestLayerHandles(pt, layer) {
-  const { w, h } = getLayerBaseDimensions(layer);
-  const sw = w * (layer.scale ?? 1);
-  const sh = h * (layer.scale ?? 1);
+function hitTestLayerHandles(pt, layer, includeHandles = true) {
+  if (!layer || !layer.visible) return null;
+  const { sw, sh } = getLayerScaledSize(layer);
   const { lx, ly } = pointToLayerLocal(pt, layer);
 
-  // Check rotation handle
-  if (Math.hypot(lx, ly - (-sh / 2 - 38)) < 28) return 'rotate';
+  if (includeHandles) {
+    // 1. Top rotation handle
+    if (Math.hypot(lx, ly - (-sh / 2 - 36)) < 30) {
+      return { mode: 'rotate', cursor: 'crosshair' };
+    }
 
-  // Check 4 corner scale handles
-  const corners = [
-    [-sw / 2, -sh / 2],
-    [sw / 2, -sh / 2],
-    [sw / 2, sh / 2],
-    [-sw / 2, sh / 2],
-  ];
-  for (const [hx, hy] of corners) {
-    if (Math.hypot(lx - hx, ly - hy) < 28) return 'scale';
+    // 2. 8 Photoshop square handles (check 4 corners first, then 4 sides)
+    const handles = getPhotoshopHandles(sw, sh);
+    const ordered = [
+      ...handles.filter((h) => h.sx !== 0 && h.sy !== 0),
+      ...handles.filter((h) => h.sx === 0 || h.sy === 0),
+    ];
+    for (const h of ordered) {
+      if (Math.max(Math.abs(lx - h.x), Math.abs(ly - h.y)) < 26) {
+        return { mode: 'scale', handle: h, cursor: h.cursor };
+      }
+    }
   }
 
-  return 'move';
+  // 3. Inside layer bounding box -> move
+  if (Math.abs(lx) <= sw / 2 && Math.abs(ly) <= sh / 2) {
+    return { mode: 'move', cursor: 'move' };
+  }
+
+  return null;
 }
 
-el.overlayCanvas.addEventListener('pointerenter', () => {
-  isCanvasFocused = true;
-  renderOverlay();
-});
-
-el.overlayCanvas.addEventListener('pointerleave', () => {
-  if (!isDragging) {
-    isCanvasFocused = false;
-    renderOverlay();
-  }
-});
-
 el.overlayCanvas.addEventListener('pointerdown', (e) => {
-  const layer = getSelectedLayer();
-  if (!layer || !layer.visible) return;
+  const pt = clientToCanvas1024(e);
+  let layer = getSelectedLayer();
 
-  isCanvasFocused = true;
+  // 1. Check active layer (including transform handles if transform box is currently visible)
+  let hit = layer ? hitTestLayerHandles(pt, layer, isTransformActive) : null;
+
+  // 2. If missed active layer, check all visible layers top-to-bottom
+  if (!hit) {
+    for (let i = state.layers.length - 1; i >= 0; i--) {
+      const candidate = state.layers[i];
+      if (!candidate.visible) continue;
+      const candHit = hitTestLayerHandles(pt, candidate, false);
+      if (candHit) {
+        state.selectedLayerId = candidate.id;
+        layer = candidate;
+        hit = candHit;
+        syncAllUI();
+        break;
+      }
+    }
+  }
+
+  // 3. Clicked empty space outside all layers -> deselect transform box (just like Photoshop!)
+  if (!hit) {
+    if (isTransformActive) {
+      isTransformActive = false;
+      renderOverlay();
+    }
+    return;
+  }
+
+  // Activate transform box & start drag
+  isTransformActive = true;
   layer.isStarter = false;
   isDragging = true;
+  dragMode = hit.mode;
   el.overlayCanvas.setPointerCapture(e.pointerId);
 
-  const pt = clientToCanvas1024(e);
-  dragMode = hitTestLayerHandles(pt, layer);
-  const cx = HIG.CANVAS_SIZE / 2 + (layer.x || 0);
-  const cy = HIG.CANVAS_SIZE / 2 + (layer.y || 0);
+  const { baseW, baseH, scaleX, scaleY, sw, sh } = getLayerScaledSize(layer);
+  const cx0 = HIG.CANVAS_SIZE / 2 + (layer.x || 0);
+  const cy0 = HIG.CANVAS_SIZE / 2 + (layer.y || 0);
+  const rotRad = ((layer.rotation || 0) * Math.PI) / 180;
+  const cosR = Math.cos(rotRad);
+  const sinR = Math.sin(rotRad);
+
+  // Opposite corner/edge anchor point in world space for Photoshop-accurate resizing
+  const sx = hit.handle?.sx ?? 0;
+  const sy = hit.handle?.sy ?? 0;
+  const fixedLocalX = (-sx * sw) / 2;
+  const fixedLocalY = (-sy * sh) / 2;
+  const fixedWorldX = cx0 + fixedLocalX * cosR - fixedLocalY * sinR;
+  const fixedWorldY = cy0 + fixedLocalX * sinR + fixedLocalY * cosR;
 
   dragStart = {
     px: pt.x,
     py: pt.y,
     lx: layer.x || 0,
     ly: layer.y || 0,
-    scale: layer.scale ?? 1,
-    rot: layer.rotation || 0,
-    dist: Math.max(12, Math.hypot(pt.x - cx, pt.y - cy)),
-    angle: Math.atan2(pt.y - cy, pt.x - cx),
+    cx0,
+    cy0,
+    baseW,
+    baseH,
+    scaleX0: scaleX,
+    scaleY0: scaleY,
+    sw0: sw,
+    sh0: sh,
+    sx,
+    sy,
+    fixedWorldX,
+    fixedWorldY,
+    rot0: layer.rotation || 0,
+    rotRad,
+    cosR,
+    sinR,
+    angle0: Math.atan2(pt.y - cy0, pt.x - cx0),
   };
   renderOverlay();
 });
 
 el.overlayCanvas.addEventListener('pointermove', (e) => {
   const layer = getSelectedLayer();
-  if (!layer || !layer.visible) return;
+  if (!layer || !layer.visible) {
+    el.overlayCanvas.style.cursor = 'default';
+    return;
+  }
   const pt = clientToCanvas1024(e);
 
   if (!isDragging) {
-    const mode = hitTestLayerHandles(pt, layer);
-    el.overlayCanvas.style.cursor =
-      mode === 'rotate' ? 'crosshair' : mode === 'scale' ? 'nwse-resize' : 'grab';
+    const hit = hitTestLayerHandles(pt, layer, isTransformActive);
+    el.overlayCanvas.style.cursor = hit ? hit.cursor : 'default';
     return;
   }
-
-  const cx = HIG.CANVAS_SIZE / 2 + dragStart.lx;
-  const cy = HIG.CANVAS_SIZE / 2 + dragStart.ly;
 
   if (dragMode === 'move') {
     let nx = dragStart.lx + (pt.x - dragStart.px);
     let ny = dragStart.ly + (pt.y - dragStart.py);
-    const snapDist = 12;
+    const snapDist = 10;
     activeSnapGuides = { x: false, y: false };
     if (Math.abs(nx) < snapDist) {
       nx = 0;
@@ -1621,13 +1701,69 @@ el.overlayCanvas.addEventListener('pointermove', (e) => {
     layer.x = Math.round(nx);
     layer.y = Math.round(ny);
   } else if (dragMode === 'scale') {
-    const newDist = Math.max(12, Math.hypot(pt.x - cx, pt.y - cy));
-    layer.scale = Math.max(0.1, Math.min(3.0, dragStart.scale * (newDist / dragStart.dist)));
+    const {
+      cx0, cy0, baseW, baseH, sw0, sh0, sx, sy,
+      fixedWorldX, fixedWorldY, cosR, sinR,
+    } = dragStart;
+
+    const fromCenter = e.altKey;
+    const freeAspect = e.shiftKey || sx === 0 || sy === 0;
+
+    if (fromCenter) {
+      // Alt/Option held: scale symmetrically around center (cx0, cy0)
+      const dx = pt.x - cx0;
+      const dy = pt.y - cy0;
+      const localX = dx * cosR + dy * sinR;
+      const localY = -dx * sinR + dy * cosR;
+      let newW = sx !== 0 ? Math.max(24, Math.abs(localX) * 2) : sw0;
+      let newH = sy !== 0 ? Math.max(24, Math.abs(localY) * 2) : sh0;
+
+      if (!freeAspect) {
+        const factor = Math.max(0.08, Math.min(4.0, (newW * sw0 + newH * sh0) / (sw0 * sw0 + sh0 * sh0)));
+        newW = sw0 * factor;
+        newH = sh0 * factor;
+      }
+      layer.scaleX = Math.max(0.08, Math.min(4.0, newW / baseW));
+      layer.scaleY = Math.max(0.08, Math.min(4.0, newH / baseH));
+      layer.scale = (layer.scaleX + layer.scaleY) / 2;
+      layer.x = Math.round(cx0 - HIG.CANVAS_SIZE / 2);
+      layer.y = Math.round(cy0 - HIG.CANVAS_SIZE / 2);
+    } else {
+      // Standard Photoshop behavior: anchor opposite corner/edge so dragged handle follows cursor 1:1
+      const dx = pt.x - fixedWorldX;
+      const dy = pt.y - fixedWorldY;
+      const spanX = dx * cosR + dy * sinR;
+      const spanY = -dx * sinR + dy * cosR;
+
+      let newW = sx !== 0 ? Math.max(24, sx * spanX) : sw0;
+      let newH = sy !== 0 ? Math.max(24, sy * spanY) : sh0;
+
+      if (!freeAspect) {
+        const factor = Math.max(0.08, Math.min(4.0, (newW * sw0 + newH * sh0) / (sw0 * sw0 + sh0 * sh0)));
+        newW = sw0 * factor;
+        newH = sh0 * factor;
+      }
+
+      layer.scaleX = Math.max(0.08, Math.min(4.0, newW / baseW));
+      layer.scaleY = Math.max(0.08, Math.min(4.0, newH / baseH));
+      layer.scale = (layer.scaleX + layer.scaleY) / 2;
+
+      const offsetLocalX = (sx * (baseW * layer.scaleX)) / 2;
+      const offsetLocalY = (sy * (baseH * layer.scaleY)) / 2;
+      const newCx = fixedWorldX + offsetLocalX * cosR - offsetLocalY * sinR;
+      const newCy = fixedWorldY + offsetLocalX * sinR + offsetLocalY * cosR;
+      layer.x = Math.round(newCx - HIG.CANVAS_SIZE / 2);
+      layer.y = Math.round(newCy - HIG.CANVAS_SIZE / 2);
+    }
   } else if (dragMode === 'rotate') {
-    const curAngle = Math.atan2(pt.y - cy, pt.x - cx);
-    let deg = dragStart.rot + ((curAngle - dragStart.angle) * 180) / Math.PI;
-    const nearest45 = Math.round(deg / 45) * 45;
-    if (Math.abs(deg - nearest45) < 4) deg = nearest45;
+    const curAngle = Math.atan2(pt.y - dragStart.cy0, pt.x - dragStart.cx0);
+    let deg = dragStart.rot0 + ((curAngle - dragStart.angle0) * 180) / Math.PI;
+    if (e.shiftKey) {
+      deg = Math.round(deg / 15) * 15;
+    } else {
+      const nearest45 = Math.round(deg / 45) * 45;
+      if (Math.abs(deg - nearest45) < 4) deg = nearest45;
+    }
     if (deg > 180) deg -= 360;
     if (deg < -180) deg += 360;
     layer.rotation = Math.round(deg);
@@ -1658,11 +1794,15 @@ el.overlayCanvas.addEventListener(
     if (!layer || !layer.visible) return;
     e.preventDefault();
     layer.isStarter = false;
+    isTransformActive = true;
     if (e.shiftKey) {
       layer.rotation = Math.max(-180, Math.min(180, Math.round((layer.rotation || 0) + e.deltaY * 0.25)));
     } else {
       const factor = e.deltaY < 0 ? 1.04 : 0.96;
-      layer.scale = Math.max(0.1, Math.min(3.0, (layer.scale ?? 1) * factor));
+      const nextS = Math.max(0.1, Math.min(3.5, (layer.scale ?? 1) * factor));
+      layer.scale = nextS;
+      layer.scaleX = Math.max(0.1, Math.min(3.5, (layer.scaleX ?? layer.scale) * factor));
+      layer.scaleY = Math.max(0.1, Math.min(3.5, (layer.scaleY ?? layer.scale) * factor));
     }
     syncActiveLayerInspector();
     renderAll();
@@ -1796,9 +1936,14 @@ function bindEvents() {
       renderOverlay();
       return;
     }
-    if (e.key.toLowerCase() === 'h') {
-      state.showHandles = !state.showHandles;
-      syncAllUI();
+    if (e.key === 'Escape' || e.key === 'Enter') {
+      isTransformActive = false;
+      renderOverlay();
+      return;
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 't') {
+      e.preventDefault();
+      isTransformActive = !isTransformActive;
       renderOverlay();
       return;
     }
@@ -1895,11 +2040,14 @@ function bindEvents() {
     layer.x = 0;
     layer.y = 0;
     layer.scale = 1;
+    layer.scaleX = 1;
+    layer.scaleY = 1;
     layer.rotation = 0;
     layer.flipX = false;
     layer.flipY = false;
     layer.opacity = 1;
     layer.cornerRadius = 0;
+    isTransformActive = true;
     pushHistory();
     syncActiveLayerInspector();
     renderAll();
@@ -1912,7 +2060,10 @@ function bindEvents() {
     layer.x = 0;
     layer.y = 0;
     layer.scale = 1;
+    layer.scaleX = 1;
+    layer.scaleY = 1;
     layer.shadow = { ...layer.shadow, enabled: true };
+    isTransformActive = true;
     pushHistory();
     syncActiveLayerInspector();
     renderAll();
@@ -1921,11 +2072,16 @@ function bindEvents() {
   el.fitFullBleedBtn.addEventListener('click', () => {
     const layer = getSelectedLayer();
     if (!layer) return;
+    const { w, h } = getLayerBaseDimensions(layer);
+    const fillScale = Math.max(HIG.SQUIRCLE_SIZE / w, HIG.SQUIRCLE_SIZE / h);
     layer.fitMode = 'fullBleed';
     layer.x = 0;
     layer.y = 0;
-    layer.scale = 1;
+    layer.scale = fillScale;
+    layer.scaleX = fillScale;
+    layer.scaleY = fillScale;
     if (layer.type === 'image') layer.shadow = { ...layer.shadow, enabled: false };
+    isTransformActive = true;
     pushHistory();
     syncActiveLayerInspector();
     renderAll();
@@ -2014,7 +2170,10 @@ function bindEvents() {
   el.layerScaleSlider.addEventListener('input', (e) => {
     const layer = getSelectedLayer();
     if (!layer) return;
-    layer.scale = Number(e.target.value) / 100;
+    const s = Number(e.target.value) / 100;
+    layer.scale = s;
+    layer.scaleX = s;
+    layer.scaleY = s;
     layer.isStarter = false;
     el.layerScaleVal.textContent = `${e.target.value}%`;
     renderAll();
