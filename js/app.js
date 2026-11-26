@@ -2,17 +2,18 @@ import {
   HIG,
   traceAppleSquircle,
   traceMacFolderBack,
+  traceMacFolderPaper,
   traceMacFolderFront,
   drawHIGGrid,
-} from './squircle.js?v=10';
-import { GRADIENT_PRESETS, VECTOR_GLYPHS } from './presets.js?v=10';
+} from './squircle.js?v=11';
+import { GRADIENT_PRESETS, VECTOR_GLYPHS } from './presets.js?v=11';
 import {
   generateICNSBlob,
   generateIconsetZipBlob,
   generatePNGBlob,
   downsampleCanvas,
   triggerDownload,
-} from './exporters.js?v=10';
+} from './exporters.js?v=11';
 
 // Pasteboard is 3072x3072 (3x the 1024x1024 icon) with the icon centered at (1024, 1024),
 // giving a full 1024px of open interactive space outside the icon on all 4 sides!
@@ -79,7 +80,7 @@ let state = {
   shapeMode: 'app', // 'app' | 'folder'
   folder: {
     badgeStyle: 'engraved', // 'engraved' | 'frosted' | 'normal'
-    showPaper: false,
+    showPaper: true, // macOS 27 folders always show the crisp white document strip by default
   },
   appearance: 'default', // 'default' | 'dark' | 'clear' | 'clear-dark' | 'tinted'
   tintColor: '#3b82f6',
@@ -511,23 +512,23 @@ function renderIcon(targetCtx, targetSize = HIG.CANVAS_SIZE, opts = {}) {
 }
 
 /**
- * Renders an authentic macOS 26 / 27 (Golden Gate) Liquid Glass Folder Icon:
- * - Back panel with top-left S-curve tab (shaded 20% deeper for 3D separation + top specular edge)
- * - Optional inner translucent paper document sheets peeking out
- * - Front Liquid Glass pocket (x: 96..928, y: 266..876) with machined top lip groove,
- *   debossed/engraved tonal glass emblem (or frosted/full-color artwork), and specular rim.
+ * Renders an authentic macOS 27 (Golden Gate) Folder Icon matching Apple's native .icns geometry:
+ * - Horizontal bounds: x = 42 .. 982 (width = 940px)
+ * - Back panel & top-left S-curve tab: y = 134 .. 884 (tab top y=134, shoulder y=201, r=68px)
+ * - White inner paper strip (on by default): x = 73 .. 951 (w=878px), y = 232 .. 340, r=42px, #ffffff
+ * - Front pocket: x = 42 .. 982 (w=940px), y = 269 .. 888 (h=619px), top r=72px, bottom r=64px
+ * - Soft top highlight lip (y=269..285) and exact 0.855x tonal debossed engraving for folder badges.
  */
 function renderFolderIcon(targetCtx, targetSize = HIG.CANVAS_SIZE, opts = {}) {
   const S = HIG.CANVAS_SIZE; // 1024
   const C = S / 2; // 512
-  const smoothing = state.hig.smoothing;
 
   targetCtx.save();
   targetCtx.clearRect(0, 0, targetSize, targetSize);
   const ratio = targetSize / S;
   targetCtx.scale(ratio, ratio);
 
-  // 1. Apple HIG Outer Drop Shadow behind full folder silhouette
+  // 1. Apple macOS 27 Folder Outer Drop Shadow (Y +10, Blur 22, 38% opacity + subtle ambient)
   if (state.hig.outerShadow) {
     const shadowTemp = document.createElement('canvas');
     shadowTemp.width = S;
@@ -535,14 +536,26 @@ function renderFolderIcon(targetCtx, targetSize = HIG.CANVAS_SIZE, opts = {}) {
     const stx = shadowTemp.getContext('2d');
 
     stx.save();
-    stx.shadowColor = `rgba(0, 0, 0, ${HIG.SHADOW.opacity})`;
+    stx.shadowColor = 'rgba(0, 0, 0, 0.38)';
     stx.shadowOffsetX = 0;
-    stx.shadowOffsetY = HIG.SHADOW.offsetY;
-    stx.shadowBlur = HIG.SHADOW.blur;
+    stx.shadowOffsetY = 10;
+    stx.shadowBlur = 22;
     traceMacFolderBack(stx);
     stx.fillStyle = '#000';
     stx.fill();
-    traceMacFolderFront(stx, smoothing);
+    traceMacFolderFront(stx);
+    stx.fill();
+    stx.restore();
+
+    stx.save();
+    stx.shadowColor = 'rgba(0, 0, 0, 0.16)';
+    stx.shadowOffsetX = 0;
+    stx.shadowOffsetY = 2;
+    stx.shadowBlur = 8;
+    traceMacFolderBack(stx);
+    stx.fillStyle = '#000';
+    stx.fill();
+    traceMacFolderFront(stx);
     stx.fill();
     stx.restore();
 
@@ -551,116 +564,90 @@ function renderFolderIcon(targetCtx, targetSize = HIG.CANVAS_SIZE, opts = {}) {
     stx.globalCompositeOperation = 'destination-out';
     traceMacFolderBack(stx);
     stx.fill();
-    traceMacFolderFront(stx, smoothing);
+    traceMacFolderFront(stx);
     stx.fill();
     stx.restore();
 
     targetCtx.drawImage(shadowTemp, 0, 0);
   }
 
-  // 2. Back Panel & Top-Left S-Curve Tab
+  // 2. Back Panel & Top-Left S-Curve Tab (x: 42..982, y: 134..884)
   targetCtx.save();
   traceMacFolderBack(targetCtx);
   targetCtx.clip();
 
-  renderBackground(targetCtx, 96, 148, 832, 728);
+  renderBackground(targetCtx, 42, 134, 940, 750);
 
-  // Darken back panel slightly so it sits behind the front pocket in 3D space
-  const backShade = targetCtx.createLinearGradient(96, 148, 96, 310);
-  backShade.addColorStop(0, 'rgba(0, 0, 0, 0.14)');
-  backShade.addColorStop(1, 'rgba(0, 0, 0, 0.28)');
+  // Shade back panel ~14% deeper than front pocket (matching folder2.png: 92,191,236 -> 69,175,225)
+  const backShade = targetCtx.createLinearGradient(42, 134, 42, 240);
+  backShade.addColorStop(0, 'rgba(0, 0, 0, 0.08)');
+  backShade.addColorStop(0.15, 'rgba(0, 0, 0, 0.15)');
+  backShade.addColorStop(1, 'rgba(0, 0, 0, 0.21)');
   targetCtx.fillStyle = backShade;
-  targetCtx.fillRect(96, 148, 832, 728);
+  targetCtx.fillRect(42, 134, 940, 750);
 
-  // Specular top rim on the back tab & shoulder
+  // Soft 10px top highlight bevel along the tab top (y=134) and shoulder top (y=201)
+  targetCtx.save();
   traceMacFolderBack(targetCtx);
-  const tabRim = targetCtx.createLinearGradient(96, 148, 928, 280);
-  tabRim.addColorStop(0, 'rgba(255, 255, 255, 0.85)');
-  tabRim.addColorStop(0.5, 'rgba(255, 255, 255, 0.48)');
-  tabRim.addColorStop(1, 'rgba(255, 255, 255, 0.18)');
-  targetCtx.strokeStyle = tabRim;
-  targetCtx.lineWidth = Math.max(4, state.glass.rimWidth * 1.5);
+  const tabBevel = targetCtx.createLinearGradient(0, 134, 0, 225);
+  tabBevel.addColorStop(0, 'rgba(255, 255, 255, 0.55)');
+  tabBevel.addColorStop(0.45, 'rgba(255, 255, 255, 0.32)');
+  tabBevel.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  targetCtx.strokeStyle = tabBevel;
+  targetCtx.lineWidth = 10;
   targetCtx.stroke();
   targetCtx.restore();
 
-  // 3. Optional Inner Document Paper Peek (between back tab and front pocket)
-  if (state.folder?.showPaper) {
+  targetCtx.restore();
+
+  // 3. Crisp White Inner Paper Strip (x: 73..951, y: 232..352, R: 42px) — on by default in macOS 27
+  if (state.folder?.showPaper !== false) {
     targetCtx.save();
     traceMacFolderBack(targetCtx);
     targetCtx.clip();
 
-    // Back tilted sheet
     targetCtx.save();
-    targetCtx.translate(512, 280);
-    targetCtx.rotate(-0.022);
-    targetCtx.shadowColor = 'rgba(0, 0, 0, 0.22)';
-    targetCtx.shadowBlur = 12;
-    targetCtx.shadowOffsetY = 2;
-    traceAppleSquircle(targetCtx, -350, -64, 700, 140, 22, 0.6);
-    targetCtx.fillStyle = 'rgba(240, 246, 255, 0.72)';
-    targetCtx.fill();
-    targetCtx.restore();
-
-    // Front crisp white/glass document sheet
-    targetCtx.save();
-    targetCtx.shadowColor = 'rgba(0, 0, 0, 0.25)';
-    targetCtx.shadowBlur = 14;
-    targetCtx.shadowOffsetY = 3;
-    traceAppleSquircle(targetCtx, 142, 228, 740, 130, 22, 0.6);
-    const paperGrad = targetCtx.createLinearGradient(142, 228, 142, 310);
-    paperGrad.addColorStop(0, 'rgba(255, 255, 255, 0.94)');
-    paperGrad.addColorStop(1, 'rgba(226, 236, 250, 0.85)');
-    targetCtx.fillStyle = paperGrad;
+    targetCtx.shadowColor = 'rgba(0, 0, 0, 0.12)';
+    targetCtx.shadowBlur = 6;
+    targetCtx.shadowOffsetY = -1;
+    traceMacFolderPaper(targetCtx);
+    targetCtx.fillStyle = '#ffffff';
     targetCtx.fill();
     targetCtx.restore();
 
     targetCtx.restore();
   }
 
-  // 4. Cast shadow from Front Pocket onto Back Panel
+  // 4. Front Pocket (x: 42..982, y: 269..888, w: 940px, h: 619px)
   targetCtx.save();
-  traceMacFolderBack(targetCtx);
-  targetCtx.clip();
-  targetCtx.shadowColor = 'rgba(0, 0, 0, 0.34)';
-  targetCtx.shadowBlur = 22;
-  targetCtx.shadowOffsetY = -4;
-  traceMacFolderFront(targetCtx, smoothing);
-  targetCtx.fillStyle = '#000';
-  targetCtx.fill();
-  targetCtx.restore();
-
-  // 5. Front Liquid Glass Pocket (x: 96..928, y: 266..876)
-  targetCtx.save();
-  traceMacFolderFront(targetCtx, smoothing);
+  traceMacFolderFront(targetCtx);
   targetCtx.clip();
 
-  renderBackground(targetCtx, 96, 266, 832, 610);
-
-  // Subtle brighter front-pocket glass luminance
-  const frontLift = targetCtx.createLinearGradient(96, 266, 96, 876);
-  frontLift.addColorStop(0, 'rgba(255, 255, 255, 0.16)');
-  frontLift.addColorStop(0.5, 'rgba(255, 255, 255, 0.04)');
-  frontLift.addColorStop(1, 'rgba(0, 0, 0, 0.1)');
-  targetCtx.fillStyle = frontLift;
-  targetCtx.fillRect(96, 266, 832, 610);
+  renderBackground(targetCtx, 42, 269, 940, 619);
 
   if (state.glass.noise > 0.002) {
     targetCtx.save();
-    targetCtx.globalAlpha = state.glass.noise;
+    targetCtx.globalAlpha = state.glass.noise * 0.5;
     targetCtx.fillStyle = getNoisePattern(targetCtx);
-    targetCtx.fillRect(96, 266, 832, 610);
+    targetCtx.fillRect(42, 269, 940, 619);
     targetCtx.restore();
   }
 
-  // Signature macOS Folder Top Lip Crease / Groove along y = 286
+  // Exact macOS 27 Front Pocket Top Lip Highlight (y = 269..286 smooth 16px top bevel, no dark groove)
   targetCtx.save();
-  const grooveShadow = targetCtx.createLinearGradient(96, 266, 96, 294);
-  grooveShadow.addColorStop(0, 'rgba(255, 255, 255, 0.36)');
-  grooveShadow.addColorStop(0.65, 'rgba(255, 255, 255, 0.02)');
-  grooveShadow.addColorStop(0.82, 'rgba(0, 0, 0, 0.14)');
-  grooveShadow.addColorStop(1, 'rgba(255, 255, 255, 0.18)');
-  targetCtx.fillStyle = grooveShadow;
-  targetCtx.fillRect(96, 266, 832, 28);
+  const topLip = targetCtx.createLinearGradient(42, 269, 42, 287);
+  topLip.addColorStop(0, 'rgba(255, 255, 255, 0.42)');
+  topLip.addColorStop(0.35, 'rgba(255, 255, 255, 0.18)');
+  topLip.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  targetCtx.fillStyle = topLip;
+  targetCtx.fillRect(42, 269, 940, 20);
+
+  // Subtle bottom cushion shading (y = 865..888)
+  const botLip = targetCtx.createLinearGradient(42, 864, 42, 888);
+  botLip.addColorStop(0, 'rgba(0, 0, 0, 0)');
+  botLip.addColorStop(1, 'rgba(0, 0, 0, 0.08)');
+  targetCtx.fillStyle = botLip;
+  targetCtx.fillRect(42, 864, 940, 24);
   targetCtx.restore();
 
   // Foreground Layers rendered on the Front Pocket
@@ -669,8 +656,20 @@ function renderFolderIcon(targetCtx, targetSize = HIG.CANVAS_SIZE, opts = {}) {
     renderLayer(targetCtx, layer, C);
   }
 
-  // Liquid Glass Sheen, Inner Depth & Specular Rim on Front Pocket
-  renderLiquidGlassOverlays(targetCtx, 96, 266, 832, 610, 68, smoothing);
+  // Subtle edge rim on Front Pocket
+  if (state.glass.rimIntensity > 0.01) {
+    targetCtx.save();
+    traceMacFolderFront(targetCtx);
+    const pocketRim = targetCtx.createLinearGradient(42, 269, 42, 888);
+    pocketRim.addColorStop(0, `rgba(255, 255, 255, ${(state.glass.rimIntensity * 0.55).toFixed(3)})`);
+    pocketRim.addColorStop(0.15, `rgba(255, 255, 255, ${(state.glass.rimIntensity * 0.12).toFixed(3)})`);
+    pocketRim.addColorStop(0.85, 'rgba(0, 0, 0, 0.04)');
+    pocketRim.addColorStop(1, 'rgba(0, 0, 0, 0.12)');
+    targetCtx.strokeStyle = pocketRim;
+    targetCtx.lineWidth = Math.max(3, state.glass.rimWidth);
+    targetCtx.stroke();
+    targetCtx.restore();
+  }
 
   targetCtx.restore(); // end front pocket clip
   targetCtx.restore();
@@ -867,33 +866,25 @@ function renderLayer(ctx, layer, center) {
   const isFolderFrosted = state.shapeMode === 'folder' && state.folder?.badgeStyle === 'frosted';
 
   if (isFolderEngraved) {
-    // Authentic macOS 26/27 debossed/engraved tonal glass emblem (like Utilities/Applications folders)
-    const primaryHex = state.background.stops?.[0]?.color || '#1b84f2';
-    const prgb = hexToRgb(primaryHex);
-    const darkR = Math.max(0, Math.round(prgb.r * 0.42));
-    const darkG = Math.max(0, Math.round(prgb.g * 0.42));
-    const darkB = Math.max(0, Math.round(prgb.b * 0.45));
-
-    // 1. Tonal recessed fill
+    // Exact macOS 27 debossed tonal engraving (measured from folder1.png: 14.5% darker than pocket
+    // at every Y coordinate, with a soft 2px top inner shadow and 2px bottom white catch-light).
+    // 1. Tonal 14.5% dark recessed fill (lets the exact pocket gradient show through at 0.855x brightness!)
     tctx.save();
     tctx.globalCompositeOperation = 'source-in';
-    const engraveGrad = tctx.createLinearGradient(0, pad, 0, pad + drawH);
-    engraveGrad.addColorStop(0, `rgba(${darkR}, ${darkG}, ${darkB}, 0.62)`);
-    engraveGrad.addColorStop(1, `rgba(${darkR}, ${darkG}, ${darkB}, 0.44)`);
-    tctx.fillStyle = engraveGrad;
+    tctx.fillStyle = 'rgba(0, 0, 0, 0.148)';
     tctx.fillRect(0, 0, tw, th);
     tctx.restore();
 
-    // 2. Top-left inner recess shadow (debossed depth)
+    // 2. Top inner recess shadow (debossed top edge)
     const innerSh = document.createElement('canvas');
     innerSh.width = tw;
     innerSh.height = th;
     const istx = innerSh.getContext('2d');
     istx.drawImage(temp, 0, 0);
     istx.globalCompositeOperation = 'destination-out';
-    istx.drawImage(temp, 3, 4.5);
+    istx.drawImage(temp, 0, 2.5);
     istx.globalCompositeOperation = 'source-in';
-    istx.fillStyle = 'rgba(0, 0, 0, 0.38)';
+    istx.fillStyle = 'rgba(0, 0, 0, 0.22)';
     istx.fillRect(0, 0, tw, th);
 
     tctx.save();
@@ -901,16 +892,16 @@ function renderLayer(ctx, layer, center) {
     tctx.drawImage(innerSh, 0, 0);
     tctx.restore();
 
-    // 3. Bottom-right specular catch-light rim
+    // 3. Bottom edge catch-light highlight
     const botRim = document.createElement('canvas');
     botRim.width = tw;
     botRim.height = th;
     const brtx = botRim.getContext('2d');
     brtx.drawImage(temp, 0, 0);
     brtx.globalCompositeOperation = 'destination-out';
-    brtx.drawImage(temp, -2.5, -3.5);
+    brtx.drawImage(temp, 0, -2.5);
     brtx.globalCompositeOperation = 'source-in';
-    brtx.fillStyle = 'rgba(255, 255, 255, 0.58)';
+    brtx.fillStyle = 'rgba(255, 255, 255, 0.42)';
     brtx.fillRect(0, 0, tw, th);
 
     tctx.save();
@@ -2698,12 +2689,12 @@ function bindEvents() {
     const layer = getSelectedLayer();
     if (!layer) return;
     const { w, h } = getLayerBaseDimensions(layer);
-    const targetW = state.shapeMode === 'folder' ? 832 : HIG.SQUIRCLE_SIZE;
-    const targetH = state.shapeMode === 'folder' ? 610 : HIG.SQUIRCLE_SIZE;
+    const targetW = state.shapeMode === 'folder' ? 940 : HIG.SQUIRCLE_SIZE;
+    const targetH = state.shapeMode === 'folder' ? 619 : HIG.SQUIRCLE_SIZE;
     const fillScale = Math.max(targetW / w, targetH / h);
     layer.fitMode = 'fullBleed';
     layer.x = 0;
-    layer.y = state.shapeMode === 'folder' ? 60 : 0;
+    layer.y = state.shapeMode === 'folder' ? 66 : 0;
     layer.scale = fillScale;
     layer.scaleX = fillScale;
     layer.scaleY = fillScale;

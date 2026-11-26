@@ -12,12 +12,28 @@ export const GRADIENT_PRESETS = [
       type: 'linear',
       angle: 180,
       stops: [
-        { color: '#6fd3ff', pos: 0 },
-        { color: '#38a9ff', pos: 52 },
-        { color: '#1b84f2', pos: 100 },
+        { color: '#72cff7', pos: 0 },
+        { color: '#5ec1ed', pos: 50 },
+        { color: '#47b1e2', pos: 100 },
       ],
     },
-    glass: { sheen: 0.22, rimIntensity: 0.9, rimWidth: 3.5, innerGlow: 0.34 },
+    glass: { sheen: 0.08, rimIntensity: 0.45, rimWidth: 2.5, innerGlow: 0.15 },
+  },
+  {
+    id: 'folder-yellow-27',
+    name: 'macOS Folder Gold',
+    category: 'Folders',
+    appearance: 'default',
+    background: {
+      type: 'linear',
+      angle: 180,
+      stops: [
+        { color: '#ffd669', pos: 0 },
+        { color: '#f7ca3b', pos: 50 },
+        { color: '#e3b935', pos: 100 },
+      ],
+    },
+    glass: { sheen: 0.08, rimIntensity: 0.45, rimWidth: 2.5, innerGlow: 0.15 },
   },
   {
     id: 'folder-pink-27',
@@ -33,7 +49,7 @@ export const GRADIENT_PRESETS = [
         { color: '#d42c85', pos: 100 },
       ],
     },
-    glass: { sheen: 0.22, rimIntensity: 0.88, rimWidth: 3.5, innerGlow: 0.34 },
+    glass: { sheen: 0.08, rimIntensity: 0.45, rimWidth: 2.5, innerGlow: 0.15 },
   },
   {
     id: 'golden-gate-27',

@@ -120,45 +120,86 @@ export function createSquirclePath(ctx, x, y, size, radiusRatio = HIG.CORNER_RAT
 }
 
 /**
- * Traces the macOS 26 / 27 (Golden Gate) Folder Back Panel including the top-left S-curve tab.
- * Coordinates are in 1024x1024 master canvas space.
+ * Traces the exact macOS 27 Folder Back Panel including the top-left S-curve tab.
+ * Measured directly from Apple's macOS 27 folder .icns (1024x1024):
+ * - Horizontal bounds: x = 42 .. 982 (width = 940px)
+ * - Top of tab: y = 134 (flat x = 110 .. 310, top-left radius = 68px)
+ * - S-curve ramp: (310, 134) -> bezierCurveTo(356, 134, 374, 201, 420, 201)
+ * - Right shoulder: y = 201 (flat x = 420 .. 914, top-right radius = 68px)
+ * - Bottom: y = 884 (bottom radius = 64px)
  */
 export function traceMacFolderBack(ctx) {
-  const L = 96;
-  const R = 928;
-  const tabTop = 148;
-  const shoulderTop = 210;
-  const bot = 872;
-  const rTop = 52;
-  const rBot = 80;
+  const L = 42;
+  const R = 982;
+  const tabTop = 134;
+  const shoulderTop = 201;
+  const bot = 884;
+  const rTop = 68;
+  const rBot = 64;
+  const k = 0.55228475;
 
   ctx.beginPath();
   // Start after top-left tab corner
   ctx.moveTo(L + rTop, tabTop);
   // Top flat edge of tab
-  ctx.lineTo(342, tabTop);
-  // Characteristic macOS smooth S-curve down to the back shoulder
-  ctx.bezierCurveTo(392, tabTop, 408, shoulderTop, 462, shoulderTop);
+  ctx.lineTo(310, tabTop);
+  // Exact macOS 27 S-curve down to the back shoulder (y: 134 -> 201 over x: 310 -> 420)
+  ctx.bezierCurveTo(356, tabTop, 374, shoulderTop, 420, shoulderTop);
   // Back shoulder to top-right corner
   ctx.lineTo(R - rTop, shoulderTop);
-  ctx.quadraticCurveTo(R, shoulderTop, R, shoulderTop + rTop);
+  ctx.bezierCurveTo(
+    R - rTop * (1 - k),
+    shoulderTop,
+    R,
+    shoulderTop + rTop * (1 - k),
+    R,
+    shoulderTop + rTop
+  );
   // Right edge down to bottom-right corner
   ctx.lineTo(R, bot - rBot);
-  ctx.quadraticCurveTo(R, bot, R - rBot, bot);
+  ctx.bezierCurveTo(R, bot - rBot * (1 - k), R - rBot * (1 - k), bot, R - rBot, bot);
   // Bottom edge to bottom-left corner
   ctx.lineTo(L + rBot, bot);
-  ctx.quadraticCurveTo(L, bot, L, bot - rBot);
+  ctx.bezierCurveTo(L + rBot * (1 - k), bot, L, bot - rBot * (1 - k), L, bot - rBot);
   // Left edge up to top-left tab corner
   ctx.lineTo(L, tabTop + rTop);
-  ctx.quadraticCurveTo(L, tabTop, L + rTop, tabTop);
+  ctx.bezierCurveTo(L, tabTop + rTop * (1 - k), L + rTop * (1 - k), tabTop, L + rTop, tabTop);
   ctx.closePath();
 }
 
 /**
- * Traces the macOS 26 / 27 Folder Front Liquid Glass Pocket (x: 96..928, y: 266..876).
+ * Traces the white inner paper strip visible inside macOS 27 folders:
+ * x = 73 .. 951 (width = 878px), y = 232 .. 340, top corner radius = 42px.
  */
-export function traceMacFolderFront(ctx, smoothing = 0.6) {
-  traceAppleSquircle(ctx, 96, 266, 832, 610, 68, smoothing);
+export function traceMacFolderPaper(ctx) {
+  traceAppleSquircle(ctx, 73, 232, 878, 120, 42, 0.55);
+}
+
+/**
+ * Traces the exact macOS 27 Folder Front Pocket:
+ * x = 42 .. 982 (width = 940px), y = 269 .. 888 (height = 619px),
+ * top corner radius = 72px, bottom corner radius = 64px.
+ */
+export function traceMacFolderFront(ctx) {
+  const L = 42;
+  const R = 982;
+  const T = 269;
+  const B = 888;
+  const rTop = 72;
+  const rBot = 64;
+  const k = 0.55228475;
+
+  ctx.beginPath();
+  ctx.moveTo(L + rTop, T);
+  ctx.lineTo(R - rTop, T);
+  ctx.bezierCurveTo(R - rTop * (1 - k), T, R, T + rTop * (1 - k), R, T + rTop);
+  ctx.lineTo(R, B - rBot);
+  ctx.bezierCurveTo(R, B - rBot * (1 - k), R - rBot * (1 - k), B, R - rBot, B);
+  ctx.lineTo(L + rBot, B);
+  ctx.bezierCurveTo(L + rBot * (1 - k), B, L, B - rBot * (1 - k), L, B - rBot);
+  ctx.lineTo(L, T + rTop);
+  ctx.bezierCurveTo(L, T + rTop * (1 - k), L + rTop * (1 - k), T, L + rTop, T);
+  ctx.closePath();
 }
 
 /**
