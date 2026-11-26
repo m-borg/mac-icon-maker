@@ -4,6 +4,70 @@
 
 export const GRADIENT_PRESETS = [
   {
+    id: 'golden-gate-27',
+    name: 'Golden Gate 27',
+    category: 'macOS 27',
+    appearance: 'default',
+    background: {
+      type: 'mesh',
+      angle: 150,
+      stops: [
+        { color: '#ff6b4a', pos: 0 },
+        { color: '#f02e46', pos: 48 },
+        { color: '#3b1548', pos: 100 },
+      ],
+    },
+    glass: { sheen: 0.14, rimIntensity: 0.94, rimWidth: 3.5, innerGlow: 0.28 },
+  },
+  {
+    id: 'apple-intel-27',
+    name: 'Intelligence 27',
+    category: 'macOS 27',
+    appearance: 'default',
+    background: {
+      type: 'mesh',
+      angle: 135,
+      stops: [
+        { color: '#58b9ff', pos: 0 },
+        { color: '#a855f7', pos: 38 },
+        { color: '#ff5d8f', pos: 72 },
+        { color: '#ff9a3c', pos: 100 },
+      ],
+    },
+    glass: { sheen: 0.16, rimIntensity: 0.96, rimWidth: 3.5, innerGlow: 0.32 },
+  },
+  {
+    id: 'bay-fog-27',
+    name: 'Bay Fog 27',
+    category: 'macOS 27',
+    appearance: 'default',
+    background: {
+      type: 'linear',
+      angle: 165,
+      stops: [
+        { color: '#eef6ff', pos: 0 },
+        { color: '#9ec5eb', pos: 52 },
+        { color: '#456b96', pos: 100 },
+      ],
+    },
+    glass: { sheen: 0.16, rimIntensity: 0.94, rimWidth: 3.5, innerGlow: 0.3 },
+  },
+  {
+    id: 'clear-dark-27',
+    name: 'Clear Dark 27',
+    category: 'macOS 27',
+    appearance: 'clear-dark',
+    background: {
+      type: 'linear',
+      angle: 145,
+      stops: [
+        { color: '#2b3242', pos: 0 },
+        { color: '#10131c', pos: 100 },
+      ],
+    },
+    glass: { sheen: 0.18, rimIntensity: 0.92, rimWidth: 3.5, innerGlow: 0.38 },
+  },
+  {
     id: 'tahoe-glass',
     name: 'Tahoe Crystal',
     category: 'Liquid Glass',

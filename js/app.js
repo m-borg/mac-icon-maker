@@ -1,12 +1,12 @@
-import { HIG, traceAppleSquircle, drawHIGGrid } from './squircle.js?v=7';
-import { GRADIENT_PRESETS, VECTOR_GLYPHS } from './presets.js?v=7';
+import { HIG, traceAppleSquircle, drawHIGGrid } from './squircle.js?v=8';
+import { GRADIENT_PRESETS, VECTOR_GLYPHS } from './presets.js?v=8';
 import {
   generateICNSBlob,
   generateIconsetZipBlob,
   generatePNGBlob,
   downsampleCanvas,
   triggerDownload,
-} from './exporters.js?v=7';
+} from './exporters.js?v=8';
 
 // Pasteboard is 3072x3072 (3x the 1024x1024 icon) with the icon centered at (1024, 1024),
 // giving a full 1024px of open interactive space outside the icon on all 4 sides!
@@ -83,6 +83,7 @@ let state = {
     noise: 0.04,
   },
   hig: {
+    canvasTarget: 'squircle', // 'squircle' (824px + shadow) | 'fullcanvas' (1024px Xcode 27 unmasked)
     cornerRadius: HIG.CORNER_RADIUS,
     smoothing: 0.6,
     outerShadow: true,
@@ -270,7 +271,10 @@ const el = {
   bgAngleVal: document.getElementById('bgAngleVal'),
   stopsList: document.getElementById('stopsList'),
   addStopBtn: document.getElementById('addStopBtn'),
+  glass27Btn: document.getElementById('glass27Btn'),
   resetGlassBtn: document.getElementById('resetGlassBtn'),
+  canvasTargetControl: document.getElementById('canvasTargetControl'),
+  squircleGeometryControls: document.getElementById('squircleGeometryControls'),
   rimIntensitySlider: document.getElementById('rimIntensitySlider'),
   rimIntensityVal: document.getElementById('rimIntensityVal'),
   rimWidthSlider: document.getElementById('rimWidthSlider'),
@@ -390,10 +394,11 @@ function getProcessedImageCanvas(layer) {
 function renderIcon(targetCtx, targetSize = HIG.CANVAS_SIZE, opts = {}) {
   const { includeGrid = false } = opts;
   const S = HIG.CANVAS_SIZE; // 1024
-  const M = HIG.MARGIN; // 100
-  const Q = HIG.SQUIRCLE_SIZE; // 824
+  const isFullCanvas = state.hig.canvasTarget === 'fullcanvas';
+  const M = isFullCanvas ? 0 : HIG.MARGIN; // 0 for Xcode 27 full-bleed, 100 for macOS squircle
+  const Q = isFullCanvas ? S : HIG.SQUIRCLE_SIZE; // 1024 or 824
   const C = S / 2; // 512
-  const radius = state.hig.cornerRadius;
+  const radius = isFullCanvas ? 0 : state.hig.cornerRadius;
   const smoothing = state.hig.smoothing;
 
   targetCtx.save();
@@ -401,8 +406,8 @@ function renderIcon(targetCtx, targetSize = HIG.CANVAS_SIZE, opts = {}) {
   const ratio = targetSize / S;
   targetCtx.scale(ratio, ratio);
 
-  // 1. Apple HIG Outer Drop Shadow
-  if (state.hig.outerShadow) {
+  // 1. Apple HIG Outer Drop Shadow (skipped in Xcode 27 unmasked full-bleed mode)
+  if (!isFullCanvas && state.hig.outerShadow) {
     const shadowTemp = document.createElement('canvas');
     shadowTemp.width = S;
     shadowTemp.height = S;
@@ -485,9 +490,19 @@ function renderBackground(ctx, x, y, w, h) {
 
   if (app === 'clear') {
     const grad = ctx.createLinearGradient(x, y, x + w * 0.5, y + h);
-    grad.addColorStop(0, 'rgba(248, 252, 255, 0.34)');
+    grad.addColorStop(0, 'rgba(248, 252, 255, 0.36)');
     grad.addColorStop(0.5, 'rgba(220, 236, 255, 0.16)');
-    grad.addColorStop(1, 'rgba(185, 210, 248, 0.24)');
+    grad.addColorStop(1, 'rgba(185, 210, 248, 0.26)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(x, y, w, h);
+    return;
+  }
+
+  if (app === 'clear-dark') {
+    const grad = ctx.createLinearGradient(x, y, x + w * 0.5, y + h);
+    grad.addColorStop(0, 'rgba(46, 54, 72, 0.52)');
+    grad.addColorStop(0.5, 'rgba(22, 26, 36, 0.36)');
+    grad.addColorStop(1, 'rgba(10, 12, 18, 0.55)');
     ctx.fillStyle = grad;
     ctx.fillRect(x, y, w, h);
     return;
@@ -656,16 +671,38 @@ function renderLayer(ctx, layer, center) {
   }
   tctx.restore();
 
-  // Apply Liquid Glass glyph bevel highlight if enabled
+  // Apply macOS 27 Foreground Liquid Glass Rim & refraction highlight if enabled
   if (layer.glassEffect) {
+    // 1. Subtle glass surface sheen across the glyph
     tctx.save();
     tctx.globalCompositeOperation = 'source-atop';
     const glassGrad = tctx.createLinearGradient(0, pad, 0, pad + drawH);
-    glassGrad.addColorStop(0, 'rgba(255, 255, 255, 0.52)');
-    glassGrad.addColorStop(0.45, 'rgba(255, 255, 255, 0.08)');
-    glassGrad.addColorStop(1, 'rgba(0, 0, 0, 0.16)');
+    glassGrad.addColorStop(0, 'rgba(255, 255, 255, 0.38)');
+    glassGrad.addColorStop(0.38, 'rgba(255, 255, 255, 0.04)');
+    glassGrad.addColorStop(1, 'rgba(0, 0, 0, 0.15)');
     tctx.fillStyle = glassGrad;
     tctx.fillRect(0, 0, tw, th);
+    tctx.restore();
+
+    // 2. Crisp macOS 27 directional top-left specular edge highlight around the layer's alpha silhouette
+    const rimC = document.createElement('canvas');
+    rimC.width = tw;
+    rimC.height = th;
+    const rctx = rimC.getContext('2d');
+    rctx.drawImage(temp, 0, 0);
+    rctx.globalCompositeOperation = 'destination-out';
+    rctx.drawImage(temp, 3, 3.5);
+    rctx.globalCompositeOperation = 'source-in';
+    const rimFill = rctx.createLinearGradient(pad, pad, pad + drawW, pad + drawH);
+    rimFill.addColorStop(0, 'rgba(255, 255, 255, 0.92)');
+    rimFill.addColorStop(0.6, 'rgba(255, 255, 255, 0.25)');
+    rimFill.addColorStop(1, 'rgba(255, 255, 255, 0.45)');
+    rctx.fillStyle = rimFill;
+    rctx.fillRect(0, 0, tw, th);
+
+    tctx.save();
+    tctx.globalCompositeOperation = 'source-atop';
+    tctx.drawImage(rimC, 0, 0);
     tctx.restore();
   }
 
@@ -677,14 +714,14 @@ function renderLayer(ctx, layer, center) {
     tctx.globalAlpha = 0.88;
     tctx.fillRect(0, 0, tw, th);
     tctx.restore();
-  } else if (state.appearance === 'clear') {
+  } else if (state.appearance === 'clear' || state.appearance === 'clear-dark') {
     tctx.save();
     tctx.globalCompositeOperation = 'source-atop';
     const cg = tctx.createLinearGradient(0, pad, 0, pad + drawH);
-    cg.addColorStop(0, 'rgba(255, 255, 255, 0.92)');
-    cg.addColorStop(1, 'rgba(215, 232, 255, 0.7)');
+    cg.addColorStop(0, 'rgba(255, 255, 255, 0.94)');
+    cg.addColorStop(1, state.appearance === 'clear-dark' ? 'rgba(180, 210, 255, 0.55)' : 'rgba(215, 232, 255, 0.72)');
     tctx.fillStyle = cg;
-    tctx.globalAlpha = 0.72;
+    tctx.globalAlpha = 0.76;
     tctx.fillRect(0, 0, tw, th);
     tctx.restore();
   }
@@ -1491,7 +1528,22 @@ function syncAllUI() {
   el.bgNoiseSlider.value = Math.round(state.glass.noise * 100);
   el.bgNoiseVal.textContent = `${Math.round(state.glass.noise * 100)}%`;
 
-  // HIG sliders
+  // HIG sliders & Target mode
+  const targetMode = state.hig.canvasTarget || 'squircle';
+  if (el.canvasTargetControl) {
+    for (const btn of el.canvasTargetControl.querySelectorAll('.seg-btn')) {
+      btn.classList.toggle('active', btn.dataset.target === targetMode);
+    }
+  }
+  if (el.squircleGeometryControls) {
+    el.squircleGeometryControls.style.opacity = targetMode === 'fullcanvas' ? '0.42' : '1';
+    el.squircleGeometryControls.style.pointerEvents = targetMode === 'fullcanvas' ? 'none' : 'auto';
+  }
+  if (el.glass27Btn && el.resetGlassBtn) {
+    const is27 = state.glass.sheen <= 0.19 && state.glass.rimWidth <= 4.0;
+    el.glass27Btn.classList.toggle('active', is27);
+    el.resetGlassBtn.classList.toggle('active', !is27);
+  }
   el.cornerRadiusSlider.value = state.hig.cornerRadius;
   el.cornerRadiusVal.textContent = `${Number(state.hig.cornerRadius).toFixed(1)}px`;
   el.smoothingSlider.value = Math.round(state.hig.smoothing * 100);
@@ -2540,12 +2592,39 @@ function bindEvents() {
     renderAll();
   });
 
+  if (el.glass27Btn) {
+    el.glass27Btn.addEventListener('click', () => {
+      state.glass = { sheen: 0.14, rimIntensity: 0.94, rimWidth: 3.5, innerGlow: 0.28, noise: 0.03 };
+      pushHistory();
+      syncAllUI();
+      renderAll();
+      showToast('Applied macOS 27 Golden Gate crisp Liquid Glass profile');
+    });
+  }
+
   el.resetGlassBtn.addEventListener('click', () => {
     state.glass = { sheen: 0.34, rimIntensity: 0.88, rimWidth: 5, innerGlow: 0.42, noise: 0.04 };
     pushHistory();
     syncAllUI();
     renderAll();
+    showToast('Applied macOS 26 Tahoe classic Liquid Glass profile');
   });
+
+  if (el.canvasTargetControl) {
+    el.canvasTargetControl.addEventListener('click', (e) => {
+      const btn = e.target.closest('.seg-btn');
+      if (!btn) return;
+      state.hig.canvasTarget = btn.dataset.target;
+      pushHistory();
+      syncAllUI();
+      renderAll();
+      showToast(
+        state.hig.canvasTarget === 'fullcanvas'
+          ? 'Xcode 27 Full-Bleed mode (unmasked 1024×1024 for Icon Composer)'
+          : 'Finder Squircle mode (824×824 squircle + 100px shadow margin)'
+      );
+    });
+  }
 
   el.rimIntensitySlider.addEventListener('input', (e) => {
     state.glass.rimIntensity = Number(e.target.value) / 100;
@@ -2583,7 +2662,12 @@ function bindEvents() {
   el.bgNoiseSlider.addEventListener('change', pushHistory);
 
   el.resetHigBtn.addEventListener('click', () => {
-    state.hig = { cornerRadius: HIG.CORNER_RADIUS, smoothing: 0.6, outerShadow: true };
+    state.hig = {
+      canvasTarget: 'squircle',
+      cornerRadius: HIG.CORNER_RADIUS,
+      smoothing: 0.6,
+      outerShadow: true,
+    };
     pushHistory();
     syncAllUI();
     renderAll();
