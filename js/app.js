@@ -1,12 +1,12 @@
-import { HIG, traceAppleSquircle, drawHIGGrid } from './squircle.js?v=8';
-import { GRADIENT_PRESETS, VECTOR_GLYPHS } from './presets.js?v=8';
+import { HIG, traceAppleSquircle, drawHIGGrid } from './squircle.js?v=9';
+import { GRADIENT_PRESETS, VECTOR_GLYPHS } from './presets.js?v=9';
 import {
   generateICNSBlob,
   generateIconsetZipBlob,
   generatePNGBlob,
   downsampleCanvas,
   triggerDownload,
-} from './exporters.js?v=8';
+} from './exporters.js?v=9';
 
 // Pasteboard is 3072x3072 (3x the 1024x1024 icon) with the icon centered at (1024, 1024),
 // giving a full 1024px of open interactive space outside the icon on all 4 sides!

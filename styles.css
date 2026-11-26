@@ -288,8 +288,9 @@ html, body {
 .workspace {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   display: grid;
-  grid-template-columns: 292px 1fr 308px;
+  grid-template-columns: 292px minmax(0, 1fr) 308px;
   gap: 10px;
 }
 
@@ -299,6 +300,7 @@ html, body {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
 }
 
 .panel-scroll {
@@ -677,6 +679,8 @@ input[type="color"] {
   align-items: center;
   justify-content: space-between;
   min-height: 0;
+  min-width: 0;
+  overflow: hidden;
   gap: 8px;
   padding: 4px 0;
 }
@@ -738,14 +742,16 @@ input[type="color"] {
   gap: 4px;
 }
 
-/* Full-Stage Pasteboard (3x the icon size so handles can extend far outside the icon in all directions) */
+/* Full-Stage Pasteboard (positioned absolutely inside #editorView so it never expands the CSS grid column) */
 .pasteboard-wrap {
   --stage-zoom: 1;
-  --icon-display-size: calc(min(42vw, 45vh, 380px) * var(--stage-zoom));
-  position: relative;
+  --icon-display-size: calc(min(40vw, 46vh, 380px) * var(--stage-zoom));
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   width: calc(var(--icon-display-size) * 3);
   height: calc(var(--icon-display-size) * 3);
-  flex-shrink: 0;
   display: grid;
   place-items: center;
 }
