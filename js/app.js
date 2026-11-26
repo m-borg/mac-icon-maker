@@ -67,6 +67,7 @@ let state = {
   appearance: 'default', // 'default' | 'dark' | 'clear' | 'tinted'
   tintColor: '#3b82f6',
   showGrid: false,
+  showHandles: true,
   stageView: 'editor', // 'editor' | 'apps' | 'sizes'
   backdrop: 'tahoe',
   activePresetId: initialPreset.id,
@@ -85,6 +86,7 @@ let state = {
       id: uid('layer'),
       type: 'symbol',
       name: 'AI Sparkle',
+      isStarter: true,
       visible: true,
       glyphId: 'sparkle',
       color: '#ffffff',
@@ -109,8 +111,15 @@ state.selectedLayerId = state.layers[0].id;
 // Undo / Redo History
 const history = [];
 let historyIndex = -1;
+let wheelHistoryTimer = null;
 
 function pushHistory() {
+  const cleanLayers = state.layers.map((l) => {
+    const copy = { ...l };
+    delete copy._cachedKey;
+    delete copy._cachedCanvas;
+    return copy;
+  });
   const snap = JSON.stringify({
     appearance: state.appearance,
     tintColor: state.tintColor,
@@ -118,7 +127,7 @@ function pushHistory() {
     background: state.background,
     glass: state.glass,
     hig: state.hig,
-    layers: state.layers,
+    layers: cleanLayers,
     selectedLayerId: state.selectedLayerId,
   });
   if (history[historyIndex] === snap) return;
@@ -127,6 +136,11 @@ function pushHistory() {
   if (history.length > 50) history.shift();
   historyIndex = history.length - 1;
   updateHistoryButtons();
+}
+
+function pushHistoryDebounced() {
+  clearTimeout(wheelHistoryTimer);
+  wheelHistoryTimer = setTimeout(() => pushHistory(), 280);
 }
 
 function restoreSnapshot(snapStr) {
@@ -178,6 +192,7 @@ const el = {
   tintColorBar: document.getElementById('tintColorBar'),
   tintColorInput: document.getElementById('tintColorInput'),
   gridToggleBtn: document.getElementById('gridToggleBtn'),
+  handlesToggleBtn: document.getElementById('handlesToggleBtn'),
   helpBtn: document.getElementById('helpBtn'),
   helpModal: document.getElementById('helpModal'),
   closeHelpBtn: document.getElementById('closeHelpBtn'),
@@ -300,7 +315,6 @@ function getLayerBaseDimensions(layer) {
   if (layer.type === 'symbol') {
     return { w: 460, h: 460 };
   }
-  // text
   return { w: 480, h: 480 };
 }
 
@@ -526,44 +540,56 @@ function renderBackground(ctx, x, y, w, h) {
   ctx.fillStyle = grad;
   ctx.fillRect(x, y, w, h);
 
+  // In Mesh mode, position soft radial color orbs derived from the user's editable stops
+  // and rotated around the squircle center by bg.angle.
   if (bg.type === 'mesh') {
-    const orbs = bg.meshOrbs && bg.meshOrbs.length
-      ? bg.meshOrbs
-      : stops.map((s, idx) => ({
-          x: idx === 0 ? 0.22 : idx === 1 ? 0.8 : 0.35,
-          y: idx === 0 ? 0.2 : idx === 1 ? 0.78 : 0.82,
-          r: 0.7,
-          color: s.color,
-          alpha: 0.68,
-        }));
+    const baseOffsets = [
+      [-0.28, -0.28],
+      [0.28, 0.26],
+      [0.26, -0.26],
+      [-0.26, 0.28],
+      [0, -0.32],
+      [0, 0.32],
+    ];
+    const cosA = Math.cos(rad);
+    const sinA = Math.sin(rad);
 
-    for (const orb of orbs) {
-      const rgb = hexToRgb(orb.color);
-      const ox = x + orb.x * w;
-      const oy = y + orb.y * h;
-      const or = orb.r * w;
+    stops.forEach((s, idx) => {
+      const [bx, by] = baseOffsets[idx % baseOffsets.length];
+      // Shift radial orb position slightly by stop.pos
+      const shift = (s.pos / 100 - 0.5) * 0.25;
+      const rx = (bx + shift) * cosA - by * sinA;
+      const ry = (bx + shift) * sinA + by * cosA;
+      const ox = x + (0.5 + rx) * w;
+      const oy = y + (0.5 + ry) * h;
+      const or = w * 0.72;
+      const rgb = hexToRgb(s.color);
       const rg = ctx.createRadialGradient(ox, oy, 0, ox, oy, or);
-      rg.addColorStop(0, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${orb.alpha ?? 0.65})`);
+      rg.addColorStop(0, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.76)`);
+      rg.addColorStop(0.55, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.28)`);
       rg.addColorStop(1, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0)`);
       ctx.fillStyle = rg;
       ctx.fillRect(x, y, w, h);
-    }
+    });
   }
 }
 
 function renderLayer(ctx, layer, center) {
   const { w, h } = getLayerBaseDimensions(layer);
-  const drawW = w;
-  const drawH = h;
+  const scale = Math.max(0.05, layer.scale ?? 1);
+  // Render at actual scaled 1024-canvas pixel dimensions so scaled-up images/vectors/text never blur!
+  const drawW = Math.max(4, w * scale);
+  const drawH = Math.max(4, h * scale);
 
-  // Render layer content into a tight temp canvas so shadows, tinting, and glass effects apply cleanly
   const temp = document.createElement('canvas');
-  const pad = 120;
+  const pad = 96;
   const tw = Math.ceil(drawW + pad * 2);
   const th = Math.ceil(drawH + pad * 2);
   temp.width = tw;
   temp.height = th;
   const tctx = temp.getContext('2d');
+  tctx.imageSmoothingEnabled = true;
+  tctx.imageSmoothingQuality = 'high';
 
   // Optional per-layer corner clipping
   tctx.save();
@@ -599,7 +625,8 @@ function renderLayer(ctx, layer, center) {
   } else if (layer.type === 'text') {
     tctx.save();
     const content = layer.text || 'A';
-    const fontSize = content.length <= 2 ? 360 : content.length <= 4 ? 250 : 150;
+    const baseFontSize = content.length <= 2 ? 360 : content.length <= 4 ? 250 : 150;
+    const fontSize = Math.round(baseFontSize * scale);
     tctx.font = `${layer.fontWeight || '700'} ${fontSize}px -apple-system, BlinkMacSystemFont, "SF Pro Display", "Apple Color Emoji", sans-serif`;
     tctx.textAlign = 'center';
     tctx.textBaseline = 'middle';
@@ -647,10 +674,7 @@ function renderLayer(ctx, layer, center) {
   ctx.globalAlpha = Math.max(0, Math.min(1, layer.opacity ?? 1));
   ctx.translate(center + (layer.x || 0), center + (layer.y || 0));
   ctx.rotate(((layer.rotation || 0) * Math.PI) / 180);
-  ctx.scale(
-    (layer.scale ?? 1) * (layer.flipX ? -1 : 1),
-    (layer.scale ?? 1) * (layer.flipY ? -1 : 1)
-  );
+  ctx.scale(layer.flipX ? -1 : 1, layer.flipY ? -1 : 1);
 
   if (layer.shadow && layer.shadow.enabled && layer.shadow.blur > 0) {
     ctx.shadowColor = `rgba(0, 0, 0, ${layer.shadow.opacity ?? 0.35})`;
@@ -670,64 +694,57 @@ function renderLiquidGlassOverlays(ctx, x, y, w, h, radius, smoothing) {
   // 1. Curved Top Glass Lens Sheen
   if (sheen > 0.005) {
     ctx.save();
-    const sheenGrad = ctx.createLinearGradient(x, y, x, y + h * 0.62);
-    sheenGrad.addColorStop(0, `rgba(255, 255, 255, ${(sheen * 0.62).toFixed(3)})`);
-    sheenGrad.addColorStop(0.38, `rgba(255, 255, 255, ${(sheen * 0.16).toFixed(3)})`);
+    const sheenGrad = ctx.createLinearGradient(x, y, x, y + h * 0.58);
+    sheenGrad.addColorStop(0, `rgba(255, 255, 255, ${(sheen * 0.55).toFixed(3)})`);
+    sheenGrad.addColorStop(0.4, `rgba(255, 255, 255, ${(sheen * 0.14).toFixed(3)})`);
     sheenGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
     ctx.fillStyle = sheenGrad;
-    ctx.fillRect(x, y, w, h * 0.65);
+    ctx.fillRect(x, y, w, h * 0.6);
 
-    // Subtle specular dome arc at top
-    const domeGrad = ctx.createRadialGradient(x + w * 0.5, y - h * 0.15, w * 0.1, x + w * 0.5, y + h * 0.08, w * 0.68);
-    domeGrad.addColorStop(0, `rgba(255, 255, 255, ${(sheen * 0.42).toFixed(3)})`);
+    const domeGrad = ctx.createRadialGradient(x + w * 0.5, y - h * 0.18, w * 0.08, x + w * 0.5, y + h * 0.08, w * 0.65);
+    domeGrad.addColorStop(0, `rgba(255, 255, 255, ${(sheen * 0.38).toFixed(3)})`);
     domeGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
     ctx.fillStyle = domeGrad;
     ctx.fillRect(x, y, w, h);
     ctx.restore();
   }
 
-  // 2. Inner Bevel Depth (top highlight + bottom thickness)
+  // 2. Inner Bevel Depth (follows the continuous squircle contour instead of flat horizontal bands!)
   if (innerGlow > 0.005) {
     ctx.save();
-    const topLip = ctx.createLinearGradient(x, y, x, y + 60);
-    topLip.addColorStop(0, `rgba(255, 255, 255, ${(innerGlow * 0.45).toFixed(3)})`);
-    topLip.addColorStop(1, 'rgba(255, 255, 255, 0)');
-    ctx.fillStyle = topLip;
-    ctx.fillRect(x, y, w, 64);
-
-    const botLip = ctx.createLinearGradient(x, y + h - 75, x, y + h);
-    botLip.addColorStop(0, 'rgba(0, 0, 0, 0)');
-    botLip.addColorStop(1, `rgba(0, 0, 0, ${(innerGlow * 0.38).toFixed(3)})`);
-    ctx.fillStyle = botLip;
-    ctx.fillRect(x, y + h - 75, w, 75);
+    traceAppleSquircle(ctx, x, y, w, h, radius, smoothing);
+    const bevelGrad = ctx.createLinearGradient(x, y, x, y + h);
+    bevelGrad.addColorStop(0, `rgba(255, 255, 255, ${(innerGlow * 0.52).toFixed(3)})`);
+    bevelGrad.addColorStop(0.35, 'rgba(255, 255, 255, 0.04)');
+    bevelGrad.addColorStop(0.7, 'rgba(0, 0, 0, 0.06)');
+    bevelGrad.addColorStop(1, `rgba(0, 0, 0, ${(innerGlow * 0.44).toFixed(3)})`);
+    ctx.strokeStyle = bevelGrad;
+    ctx.lineWidth = 36;
+    ctx.filter = 'blur(14px)';
+    ctx.stroke();
+    ctx.filter = 'none';
     ctx.restore();
   }
 
   // 3. Signature macOS 26 Directional Liquid Glass Specular Rim
+  // Because ctx is already clipped to the exact outer 824x824 squircle, stroking the
+  // outer squircle path with lineWidth = rimWidth * 2 clips the outer half and leaves
+  // a mathematically uniform inner border of thickness `rimWidth` at any radius!
   if (rimIntensity > 0.005 && rimWidth > 0) {
     ctx.save();
-    const inset = rimWidth / 2;
-    traceAppleSquircle(
-      ctx,
-      x + inset,
-      y + inset,
-      w - rimWidth,
-      h - rimWidth,
-      Math.max(0, radius - inset),
-      smoothing
-    );
+    traceAppleSquircle(ctx, x, y, w, h, radius, smoothing);
 
     const rimGrad = ctx.createLinearGradient(x, y, x + w, y + h);
     const bright = Math.min(1, rimIntensity);
-    const mid = Math.min(1, rimIntensity * 0.16);
-    const bounce = Math.min(1, rimIntensity * 0.42);
+    const mid = Math.min(1, rimIntensity * 0.18);
+    const bounce = Math.min(1, rimIntensity * 0.44);
     rimGrad.addColorStop(0, `rgba(${tintedRgb.r}, ${tintedRgb.g}, ${tintedRgb.b}, ${bright.toFixed(3)})`);
-    rimGrad.addColorStop(0.28, `rgba(${tintedRgb.r}, ${tintedRgb.g}, ${tintedRgb.b}, ${(bright * 0.45).toFixed(3)})`);
+    rimGrad.addColorStop(0.28, `rgba(${tintedRgb.r}, ${tintedRgb.g}, ${tintedRgb.b}, ${(bright * 0.48).toFixed(3)})`);
     rimGrad.addColorStop(0.55, `rgba(${tintedRgb.r}, ${tintedRgb.g}, ${tintedRgb.b}, ${mid.toFixed(3)})`);
     rimGrad.addColorStop(1, `rgba(${tintedRgb.r}, ${tintedRgb.g}, ${tintedRgb.b}, ${bounce.toFixed(3)})`);
 
     ctx.strokeStyle = rimGrad;
-    ctx.lineWidth = rimWidth;
+    ctx.lineWidth = rimWidth * 2;
     ctx.stroke();
     ctx.restore();
   }
@@ -735,6 +752,19 @@ function renderLiquidGlassOverlays(ctx, x, y, w, h, radius, smoothing) {
 
 // Snap state for visual alignment guides
 let activeSnapGuides = { x: false, y: false };
+
+function getHandlePositions(sw, sh) {
+  return [
+    { id: 'nw', x: -sw / 2, y: -sh / 2, cursor: 'nwse-resize' },
+    { id: 'n', x: 0, y: -sh / 2, cursor: 'ns-resize' },
+    { id: 'ne', x: sw / 2, y: -sh / 2, cursor: 'nesw-resize' },
+    { id: 'e', x: sw / 2, y: 0, cursor: 'ew-resize' },
+    { id: 'se', x: sw / 2, y: sh / 2, cursor: 'nwse-resize' },
+    { id: 's', x: 0, y: sh / 2, cursor: 'ns-resize' },
+    { id: 'sw', x: -sw / 2, y: sh / 2, cursor: 'nesw-resize' },
+    { id: 'w', x: -sw / 2, y: 0, cursor: 'ew-resize' },
+  ];
+}
 
 function renderOverlay() {
   const S = HIG.CANVAS_SIZE;
@@ -748,10 +778,10 @@ function renderOverlay() {
   }
 
   // Snap guides while dragging
-  if (activeSnapGuides.x || activeSnapGuides.y) {
+  if (isDragging && (activeSnapGuides.x || activeSnapGuides.y)) {
     overlayCtx.save();
     overlayCtx.strokeStyle = '#ffcf40';
-    overlayCtx.lineWidth = 2;
+    overlayCtx.lineWidth = 2.5;
     overlayCtx.setLineDash([8, 6]);
     if (activeSnapGuides.x) {
       overlayCtx.beginPath();
@@ -768,53 +798,54 @@ function renderOverlay() {
     overlayCtx.restore();
   }
 
-  // Active layer selection handles
+  // Active layer selection box & 8 resize handles + rotation knob
   const layer = getSelectedLayer();
-  if (!layer || !layer.visible || isDragging === false && !showHandles) {
-    // Always show subtle handles when hovering or transforming, or if layer is selected and not fullBleed
-    if (!layer || !layer.visible || !isCanvasFocused) return;
-  }
+  if (!layer || !layer.visible || !state.showHandles) return;
 
-  if (layer && layer.visible && isCanvasFocused) {
-    const { w, h } = getLayerBaseDimensions(layer);
-    const sw = w * (layer.scale ?? 1);
-    const sh = h * (layer.scale ?? 1);
-    const cx = S / 2 + (layer.x || 0);
-    const cy = S / 2 + (layer.y || 0);
-    const rot = ((layer.rotation || 0) * Math.PI) / 180;
+  const { w, h } = getLayerBaseDimensions(layer);
+  const sw = w * (layer.scale ?? 1);
+  const sh = h * (layer.scale ?? 1);
+  const cx = S / 2 + (layer.x || 0);
+  const cy = S / 2 + (layer.y || 0);
+  const rot = ((layer.rotation || 0) * Math.PI) / 180;
 
+  overlayCtx.save();
+  overlayCtx.translate(cx, cy);
+  overlayCtx.rotate(rot);
+
+  // Bounding box outline
+  overlayCtx.strokeStyle = 'rgba(78, 175, 255, 0.92)';
+  overlayCtx.lineWidth = 3;
+  overlayCtx.strokeRect(-sw / 2, -sh / 2, sw, sh);
+
+  // Rotation stem & knob
+  const rotY = -sh / 2 - 44;
+  overlayCtx.beginPath();
+  overlayCtx.moveTo(0, -sh / 2);
+  overlayCtx.lineTo(0, rotY);
+  overlayCtx.stroke();
+
+  const drawHandle = (hx, hy, r = 12, isRot = false) => {
     overlayCtx.save();
-    overlayCtx.translate(cx, cy);
-    overlayCtx.rotate(rot);
-
-    overlayCtx.strokeStyle = 'rgba(96, 185, 255, 0.85)';
-    overlayCtx.lineWidth = 2.5;
-    overlayCtx.strokeRect(-sw / 2, -sh / 2, sw, sh);
-
-    // Rotation stem & knob
+    overlayCtx.shadowColor = 'rgba(0, 0, 0, 0.45)';
+    overlayCtx.shadowBlur = 6;
+    overlayCtx.shadowOffsetY = 2;
     overlayCtx.beginPath();
-    overlayCtx.moveTo(0, -sh / 2);
-    overlayCtx.lineTo(0, -sh / 2 - 36);
+    overlayCtx.arc(hx, hy, r, 0, Math.PI * 2);
+    overlayCtx.fillStyle = isRot ? '#7cc4ff' : '#ffffff';
+    overlayCtx.fill();
+    overlayCtx.lineWidth = 3.5;
+    overlayCtx.strokeStyle = '#1472ff';
     overlayCtx.stroke();
-
-    const drawHandle = (hx, hy, r = 9) => {
-      overlayCtx.beginPath();
-      overlayCtx.arc(hx, hy, r, 0, Math.PI * 2);
-      overlayCtx.fillStyle = '#ffffff';
-      overlayCtx.fill();
-      overlayCtx.lineWidth = 3;
-      overlayCtx.strokeStyle = '#1d84ff';
-      overlayCtx.stroke();
-    };
-
-    drawHandle(-sw / 2, -sh / 2);
-    drawHandle(sw / 2, -sh / 2);
-    drawHandle(sw / 2, sh / 2);
-    drawHandle(-sw / 2, sh / 2);
-    drawHandle(0, -sh / 2 - 38, 10);
-
     overlayCtx.restore();
+  };
+
+  for (const hPos of getHandlePositions(sw, sh)) {
+    drawHandle(hPos.x, hPos.y, hPos.id.length === 2 ? 12 : 9.5);
   }
+  drawHandle(0, rotY, 12, true);
+
+  overlayCtx.restore();
 }
 
 function renderAll() {
@@ -969,6 +1000,7 @@ function renderGlyphPicker() {
       if (!target || target.type !== 'symbol') return;
       target.glyphId = glyph.id;
       target.name = glyph.name;
+      target.isStarter = false;
       pushHistory();
       syncLayersUI();
       renderGlyphPicker();
@@ -989,9 +1021,6 @@ function renderStopsList() {
     colorInput.value = stop.color;
     colorInput.addEventListener('input', (e) => {
       stop.color = e.target.value;
-      if (state.background.meshOrbs && state.background.meshOrbs[idx]) {
-        state.background.meshOrbs[idx].color = stop.color;
-      }
       state.activePresetId = null;
       hexLabel.textContent = stop.color;
       renderAll();
@@ -1040,6 +1069,36 @@ function renderStopsList() {
     row.append(colorInput, hexLabel, posSlider, posLabel, delBtn);
     el.stopsList.appendChild(row);
   });
+}
+
+function deleteLayerById(layerId) {
+  state.layers = state.layers.filter((l) => l.id !== layerId);
+  if (state.selectedLayerId === layerId) {
+    state.selectedLayerId = state.layers[state.layers.length - 1]?.id || null;
+  }
+  pushHistory();
+  syncAllUI();
+  renderAll();
+}
+
+function duplicateLayer(layer) {
+  const copy = deepClone({
+    ...layer,
+    _cachedKey: undefined,
+    _cachedCanvas: undefined,
+  });
+  copy.id = uid('layer');
+  copy.name = `${layer.name} Copy`;
+  copy.isStarter = false;
+  copy.x = (layer.x || 0) + 24;
+  copy.y = (layer.y || 0) + 24;
+  state.layers.push(copy);
+  state.selectedLayerId = copy.id;
+  state.showHandles = true;
+  pushHistory();
+  syncAllUI();
+  renderAll();
+  showToast(`Duplicated "${layer.name}"`);
 }
 
 function syncLayersUI() {
@@ -1091,13 +1150,14 @@ function syncLayersUI() {
       renderAll();
     });
 
+    const idx = state.layers.findIndex((l) => l.id === layer.id);
+
     const upBtn = document.createElement('button');
-    upBtn.className = 'layer-mini-btn';
-    upBtn.title = 'Move layer up';
+    upBtn.className = `layer-mini-btn ${idx >= state.layers.length - 1 ? 'muted' : ''}`;
+    upBtn.title = 'Bring layer forward';
     upBtn.textContent = '↑';
     upBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const idx = state.layers.findIndex((l) => l.id === layer.id);
       if (idx < state.layers.length - 1) {
         [state.layers[idx], state.layers[idx + 1]] = [state.layers[idx + 1], state.layers[idx]];
         pushHistory();
@@ -1106,25 +1166,43 @@ function syncLayersUI() {
       }
     });
 
+    const downBtn = document.createElement('button');
+    downBtn.className = `layer-mini-btn ${idx <= 0 ? 'muted' : ''}`;
+    downBtn.title = 'Send layer backward';
+    downBtn.textContent = '↓';
+    downBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (idx > 0) {
+        [state.layers[idx], state.layers[idx - 1]] = [state.layers[idx - 1], state.layers[idx]];
+        pushHistory();
+        syncLayersUI();
+        renderAll();
+      }
+    });
+
+    const dupBtn = document.createElement('button');
+    dupBtn.className = 'layer-mini-btn';
+    dupBtn.title = 'Duplicate layer';
+    dupBtn.textContent = '⧉';
+    dupBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      duplicateLayer(layer);
+    });
+
     const delBtn = document.createElement('button');
     delBtn.className = 'layer-mini-btn';
-    delBtn.title = 'Delete layer';
+    delBtn.title = 'Delete layer (⌫)';
     delBtn.textContent = '✕';
     delBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      state.layers = state.layers.filter((l) => l.id !== layer.id);
-      if (state.selectedLayerId === layer.id) {
-        state.selectedLayerId = state.layers[state.layers.length - 1]?.id || null;
-      }
-      pushHistory();
-      syncAllUI();
-      renderAll();
+      deleteLayerById(layer.id);
     });
 
-    actions.append(visBtn, upBtn, delBtn);
+    actions.append(visBtn, upBtn, downBtn, dupBtn, delBtn);
     li.append(thumb, nameSpan, actions);
     li.addEventListener('click', () => {
       state.selectedLayerId = layer.id;
+      state.showHandles = true;
       syncAllUI();
       renderOverlay();
     });
@@ -1202,8 +1280,11 @@ function syncAllUI() {
   el.tintColorBar.classList.toggle('hidden', state.appearance !== 'tinted');
   el.tintColorInput.value = state.tintColor;
 
-  // Grid button
+  // Grid & Handles buttons
   el.gridToggleBtn.classList.toggle('active', state.showGrid);
+  if (el.handlesToggleBtn) {
+    el.handlesToggleBtn.classList.toggle('active', state.showHandles);
+  }
 
   // Background
   for (const btn of el.bgTypeControl.querySelectorAll('.seg-btn')) {
@@ -1248,18 +1329,18 @@ function updateHistoryButtons() {
 // Image Import, Smart Trim, Palette Extract
 // ==========================================
 
-function detectOpaqueCorners(canvas) {
+function detectCornerInfo(canvas) {
   const ctx = canvas.getContext('2d');
   const w = canvas.width;
   const h = canvas.height;
-  if (w < 4 || h < 4) return false;
-  const pts = [
-    ctx.getImageData(2, 2, 1, 1).data[3],
-    ctx.getImageData(w - 3, 2, 1, 1).data[3],
-    ctx.getImageData(2, h - 3, 1, 1).data[3],
-    ctx.getImageData(w - 3, h - 3, 1, 1).data[3],
-  ];
-  return pts.every((a) => a > 235);
+  if (w < 4 || h < 4) return { isOpaqueRect: false, cornerHex: '#ffffff' };
+  const tl = ctx.getImageData(2, 2, 1, 1).data;
+  const tr = ctx.getImageData(w - 3, 2, 1, 1).data;
+  const bl = ctx.getImageData(2, h - 3, 1, 1).data;
+  const br = ctx.getImageData(w - 3, h - 3, 1, 1).data;
+  const isOpaqueRect = [tl[3], tr[3], bl[3], br[3]].every((a) => a > 235);
+  const cornerHex = tl[3] > 60 ? rgbToHex(tl[0], tl[1], tl[2]) : '#ffffff';
+  return { isOpaqueRect, cornerHex };
 }
 
 function loadImageFile(file) {
@@ -1279,18 +1360,12 @@ function loadImageFile(file) {
       const thumbC = downsampleCanvas(c, 64);
       imageAssetStore.set(assetId, { canvas: c, thumbUrl: thumbC.toDataURL('image/png') });
 
-      const isOpaqueRect = detectOpaqueCorners(c);
+      const { isOpaqueRect, cornerHex } = detectCornerInfo(c);
       const cleanName = file.name.replace(/\.[^.]+$/, '') || 'Dropped Image';
 
-      // Remove default starter sparkle if it's the untouched initial symbol and user drops a full icon
-      if (
-        state.layers.length === 1 &&
-        state.layers[0].type === 'symbol' &&
-        state.layers[0].glyphId === 'sparkle' &&
-        historyIndex <= 0
-      ) {
-        state.layers = [];
-      }
+      // Remove untouched default starter symbol when user drops their first image
+      // (even if they already clicked presets or sliders!)
+      state.layers = state.layers.filter((l) => !l.isStarter);
 
       const newLayer = {
         id: uid('layer'),
@@ -1309,17 +1384,18 @@ function loadImageFile(file) {
         fitMode: isOpaqueRect ? 'fullBleed' : 'glyph',
         shadow: { enabled: !isOpaqueRect, blur: 24, opacity: 0.35, offsetY: 12 },
         glassEffect: false,
-        removeBg: { enabled: false, color: '#ffffff', tolerance: 28 },
+        removeBg: { enabled: false, color: cornerHex, tolerance: 28 },
       };
 
       state.layers.push(newLayer);
       state.selectedLayerId = newLayer.id;
+      state.showHandles = true;
       pushHistory();
       syncAllUI();
       renderAll();
       showToast(
         isOpaqueRect
-          ? `Added "${cleanName}" in Full-Bleed Squircle mode`
+          ? `Added "${cleanName}" in Fill Squircle mode`
           : `Added "${cleanName}" as Floating Glyph`
       );
     };
@@ -1361,7 +1437,7 @@ function autoTrimSelectedImage() {
   const trimmed = document.createElement('canvas');
   trimmed.width = cw;
   trimmed.height = ch;
-  trimmed.getContext('2d').drawImage(asset.canvas, minX, minY, cw, ch, 0, 0, cw, ch);
+  trimmed.getContext('2d').drawImage(src, minX, minY, cw, ch, 0, 0, cw, ch);
 
   const newAssetId = uid('img');
   imageAssetStore.set(newAssetId, {
@@ -1369,6 +1445,7 @@ function autoTrimSelectedImage() {
     thumbUrl: downsampleCanvas(trimmed, 64).toDataURL('image/png'),
   });
   layer.assetId = newAssetId;
+  if (layer.removeBg) layer.removeBg.enabled = false;
   layer._cachedKey = null;
   layer._cachedCanvas = null;
   layer.x = 0;
@@ -1391,12 +1468,11 @@ function extractGradientFromSelectedImage() {
 
   for (let i = 0; i < d.length; i += 4) {
     if (d[i + 3] < 120) continue;
-    // Quantize to 24-step buckets
     const r = Math.round(d[i] / 28) * 28;
     const g = Math.round(d[i + 1] / 28) * 28;
     const b = Math.round(d[i + 2] / 28) * 28;
     const sat = Math.max(r, g, b) - Math.min(r, g, b);
-    const weight = 1 + sat / 30; // favor vibrant colors
+    const weight = 1 + sat / 30;
     const key = `${r},${g},${b}`;
     buckets.set(key, (buckets.get(key) || 0) + weight);
   }
@@ -1430,7 +1506,6 @@ function extractGradientFromSelectedImage() {
   state.activePresetId = null;
   state.background.type = 'linear';
   state.background.angle = 155;
-  state.background.meshOrbs = null;
   state.background.stops = picked.map((rgb, i) => ({
     color: rgbToHex(rgb[0], rgb[1], rgb[2]),
     pos: Math.round((i / (picked.length - 1)) * 100),
@@ -1446,7 +1521,6 @@ function extractGradientFromSelectedImage() {
 // On-Canvas Direct Manipulation (Drag, Scale, Rotate, Snap)
 // ==========================================
 
-let isCanvasFocused = false;
 let isDragging = false;
 let dragMode = null; // 'move' | 'scale' | 'rotate'
 let dragStart = { px: 0, py: 0, lx: 0, ly: 0, scale: 1, rot: 0, dist: 1, angle: 0 };
@@ -1459,62 +1533,100 @@ function clientToCanvas1024(e) {
   };
 }
 
-function hitTestLayerHandles(pt, layer) {
+function pointToLayerLocal(pt, layer) {
   const S = HIG.CANVAS_SIZE;
-  const { w, h } = getLayerBaseDimensions(layer);
-  const sw = w * (layer.scale ?? 1);
-  const sh = h * (layer.scale ?? 1);
   const cx = S / 2 + (layer.x || 0);
   const cy = S / 2 + (layer.y || 0);
   const rot = (-(layer.rotation || 0) * Math.PI) / 180;
-
-  // Transform point into layer local unrotated space
   const dx = pt.x - cx;
   const dy = pt.y - cy;
-  const lx = dx * Math.cos(rot) - dy * Math.sin(rot);
-  const ly = dx * Math.sin(rot) + dy * Math.cos(rot);
-
-  // Check rotation handle
-  if (Math.hypot(lx, ly - (-sh / 2 - 38)) < 24) return 'rotate';
-
-  // Check 4 corner scale handles
-  const corners = [
-    [-sw / 2, -sh / 2],
-    [sw / 2, -sh / 2],
-    [sw / 2, sh / 2],
-    [-sw / 2, sh / 2],
-  ];
-  for (const [hx, hy] of corners) {
-    if (Math.hypot(lx - hx, ly - hy) < 24) return 'scale';
-  }
-
-  // Inside bounding box -> move
-  if (Math.abs(lx) <= sw / 2 + 12 && Math.abs(ly) <= sh / 2 + 12) return 'move';
-  return 'move';
+  return {
+    lx: dx * Math.cos(rot) - dy * Math.sin(rot),
+    ly: dx * Math.sin(rot) + dy * Math.cos(rot),
+  };
 }
 
-el.overlayCanvas.addEventListener('pointerenter', () => {
-  isCanvasFocused = true;
-  renderOverlay();
-});
+function hitTestLayerHandles(pt, layer) {
+  if (!layer || !layer.visible) return null;
+  const { w, h } = getLayerBaseDimensions(layer);
+  const sw = w * (layer.scale ?? 1);
+  const sh = h * (layer.scale ?? 1);
+  const { lx, ly } = pointToLayerLocal(pt, layer);
 
-el.overlayCanvas.addEventListener('pointerleave', () => {
-  if (!isDragging) {
-    isCanvasFocused = false;
-    renderOverlay();
+  // 1. Check top rotation handle (generous 38px hit radius in 1024-space)
+  if (state.showHandles && Math.hypot(lx, ly - (-sh / 2 - 44)) < 38) {
+    return { mode: 'rotate', cursor: 'crosshair' };
   }
-});
+
+  // 2. Check 8 resize handles (4 corners + 4 midpoints)
+  if (state.showHandles) {
+    for (const hPos of getHandlePositions(sw, sh)) {
+      if (Math.hypot(lx - hPos.x, ly - hPos.y) < 38) {
+        return { mode: 'scale', handle: hPos.id, cursor: hPos.cursor };
+      }
+    }
+  }
+
+  // 3. Check inside layer bounding box
+  if (Math.abs(lx) <= sw / 2 + 16 && Math.abs(ly) <= sh / 2 + 16) {
+    return { mode: 'move', cursor: 'grab' };
+  }
+
+  return null;
+}
 
 el.overlayCanvas.addEventListener('pointerdown', (e) => {
-  const layer = getSelectedLayer();
-  if (!layer || !layer.visible) return;
+  const pt = clientToCanvas1024(e);
+  let layer = getSelectedLayer();
+  let hit = layer ? hitTestLayerHandles(pt, layer) : null;
 
-  isCanvasFocused = true;
+  // If pointer missed the selected layer's handles & box, check other visible layers top-to-bottom
+  if (!hit) {
+    for (let i = state.layers.length - 1; i >= 0; i--) {
+      const candidate = state.layers[i];
+      if (!candidate.visible) continue;
+      const candHit = hitTestLayerHandles(pt, candidate);
+      if (candHit) {
+        state.selectedLayerId = candidate.id;
+        state.showHandles = true;
+        layer = candidate;
+        hit = candHit;
+        syncAllUI();
+        break;
+      }
+    }
+  }
+
+  // If clicked outside all layers on the margin, toggle handles or allow dragging active layer if inside squircle
+  if (!hit) {
+    if (layer && layer.visible) {
+      // Allow moving active layer if clicked anywhere inside the 824x824 squircle
+      const inSquircle =
+        pt.x >= HIG.MARGIN &&
+        pt.x <= HIG.CANVAS_SIZE - HIG.MARGIN &&
+        pt.y >= HIG.MARGIN &&
+        pt.y <= HIG.CANVAS_SIZE - HIG.MARGIN;
+      if (inSquircle) {
+        state.showHandles = true;
+        hit = { mode: 'move', cursor: 'grab' };
+        syncAllUI();
+      } else {
+        state.showHandles = false;
+        syncAllUI();
+        renderOverlay();
+        return;
+      }
+    } else {
+      return;
+    }
+  }
+
+  state.showHandles = true;
+  layer.isStarter = false;
   isDragging = true;
+  dragMode = hit.mode;
   el.overlayCanvas.setPointerCapture(e.pointerId);
 
-  const pt = clientToCanvas1024(e);
-  dragMode = hitTestLayerHandles(pt, layer);
   const cx = HIG.CANVAS_SIZE / 2 + (layer.x || 0);
   const cy = HIG.CANVAS_SIZE / 2 + (layer.y || 0);
 
@@ -1525,20 +1637,23 @@ el.overlayCanvas.addEventListener('pointerdown', (e) => {
     ly: layer.y || 0,
     scale: layer.scale ?? 1,
     rot: layer.rotation || 0,
-    dist: Math.max(12, Math.hypot(pt.x - cx, pt.y - cy)),
+    dist: Math.max(16, Math.hypot(pt.x - cx, pt.y - cy)),
     angle: Math.atan2(pt.y - cy, pt.x - cx),
   };
+  renderOverlay();
 });
 
 el.overlayCanvas.addEventListener('pointermove', (e) => {
   const layer = getSelectedLayer();
-  if (!layer) return;
+  if (!layer || !layer.visible) {
+    el.overlayCanvas.style.cursor = 'default';
+    return;
+  }
   const pt = clientToCanvas1024(e);
 
   if (!isDragging) {
-    const mode = hitTestLayerHandles(pt, layer);
-    el.overlayCanvas.style.cursor =
-      mode === 'rotate' ? 'crosshair' : mode === 'scale' ? 'nwse-resize' : 'grab';
+    const hit = hitTestLayerHandles(pt, layer);
+    el.overlayCanvas.style.cursor = hit ? hit.cursor : 'default';
     return;
   }
 
@@ -1561,12 +1676,11 @@ el.overlayCanvas.addEventListener('pointermove', (e) => {
     layer.x = Math.round(nx);
     layer.y = Math.round(ny);
   } else if (dragMode === 'scale') {
-    const newDist = Math.max(12, Math.hypot(pt.x - cx, pt.y - cy));
+    const newDist = Math.max(16, Math.hypot(pt.x - cx, pt.y - cy));
     layer.scale = Math.max(0.1, Math.min(3.0, dragStart.scale * (newDist / dragStart.dist)));
   } else if (dragMode === 'rotate') {
     const curAngle = Math.atan2(pt.y - cy, pt.x - cx);
     let deg = dragStart.rot + ((curAngle - dragStart.angle) * 180) / Math.PI;
-    // Magnetic snap to 45-deg multiples
     const nearest45 = Math.round(deg / 45) * 45;
     if (Math.abs(deg - nearest45) < 4) deg = nearest45;
     if (deg > 180) deg -= 360;
@@ -1578,21 +1692,27 @@ el.overlayCanvas.addEventListener('pointermove', (e) => {
   renderAll();
 });
 
-el.overlayCanvas.addEventListener('pointerup', (e) => {
+function endCanvasDrag(e) {
   if (!isDragging) return;
   isDragging = false;
   activeSnapGuides = { x: false, y: false };
-  el.overlayCanvas.releasePointerCapture(e.pointerId);
+  try {
+    if (e && e.pointerId != null) el.overlayCanvas.releasePointerCapture(e.pointerId);
+  } catch (_) {}
   pushHistory();
   renderOverlay();
-});
+}
+
+el.overlayCanvas.addEventListener('pointerup', endCanvasDrag);
+el.overlayCanvas.addEventListener('pointercancel', endCanvasDrag);
 
 el.overlayCanvas.addEventListener(
   'wheel',
   (e) => {
     const layer = getSelectedLayer();
-    if (!layer) return;
+    if (!layer || !layer.visible) return;
     e.preventDefault();
+    layer.isStarter = false;
     if (e.shiftKey) {
       layer.rotation = Math.max(-180, Math.min(180, Math.round((layer.rotation || 0) + e.deltaY * 0.25)));
     } else {
@@ -1601,6 +1721,7 @@ el.overlayCanvas.addEventListener(
     }
     syncActiveLayerInspector();
     renderAll();
+    pushHistoryDebounced();
   },
   { passive: false }
 );
@@ -1636,12 +1757,20 @@ function bindEvents() {
   });
   el.tintColorInput.addEventListener('change', () => pushHistory());
 
-  // Grid & Help
+  // Grid, Handles & Help
   el.gridToggleBtn.addEventListener('click', () => {
     state.showGrid = !state.showGrid;
     syncAllUI();
     renderOverlay();
   });
+
+  if (el.handlesToggleBtn) {
+    el.handlesToggleBtn.addEventListener('click', () => {
+      state.showHandles = !state.showHandles;
+      syncAllUI();
+      renderOverlay();
+    });
+  }
 
   el.helpBtn.addEventListener('click', () => el.helpModal.classList.remove('hidden'));
   el.closeHelpBtn.addEventListener('click', () => el.helpModal.classList.add('hidden'));
@@ -1709,7 +1838,7 @@ function bindEvents() {
 
   // Keyboard shortcuts
   window.addEventListener('keydown', (e) => {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
       e.preventDefault();
       if (e.shiftKey) redo();
@@ -1722,13 +1851,26 @@ function bindEvents() {
       renderOverlay();
       return;
     }
+    if (e.key.toLowerCase() === 'h') {
+      state.showHandles = !state.showHandles;
+      syncAllUI();
+      renderOverlay();
+      return;
+    }
     const layer = getSelectedLayer();
     if (!layer) return;
+
+    if (e.key === 'Backspace' || e.key === 'Delete') {
+      e.preventDefault();
+      deleteLayerById(layer.id);
+      return;
+    }
+
     const step = e.shiftKey ? 10 : 1;
-    if (e.key === 'ArrowLeft') { layer.x -= step; renderAll(); }
-    else if (e.key === 'ArrowRight') { layer.x += step; renderAll(); }
-    else if (e.key === 'ArrowUp') { layer.y -= step; renderAll(); }
-    else if (e.key === 'ArrowDown') { layer.y += step; renderAll(); }
+    if (e.key === 'ArrowLeft') { e.preventDefault(); layer.x -= step; renderAll(); pushHistoryDebounced(); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); layer.x += step; renderAll(); pushHistoryDebounced(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); layer.y -= step; renderAll(); pushHistoryDebounced(); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); layer.y += step; renderAll(); pushHistoryDebounced(); }
   });
 
   // Quick Add Symbol / Text
@@ -1756,6 +1898,7 @@ function bindEvents() {
     };
     state.layers.push(layer);
     state.selectedLayerId = layer.id;
+    state.showHandles = true;
     pushHistory();
     syncAllUI();
     renderAll();
@@ -1784,6 +1927,7 @@ function bindEvents() {
     };
     state.layers.push(layer);
     state.selectedLayerId = layer.id;
+    state.showHandles = true;
     pushHistory();
     syncAllUI();
     renderAll();
@@ -1863,6 +2007,7 @@ function bindEvents() {
     layer._cachedKey = null;
     renderAll();
   });
+  el.removeBgColor.addEventListener('change', pushHistory);
 
   el.removeBgTolerance.addEventListener('input', (e) => {
     const layer = getSelectedLayer();
@@ -1872,20 +2017,24 @@ function bindEvents() {
     layer._cachedKey = null;
     renderAll();
   });
+  el.removeBgTolerance.addEventListener('change', pushHistory);
 
   el.symbolColorInput.addEventListener('input', (e) => {
     const layer = getSelectedLayer();
     if (!layer) return;
     layer.color = e.target.value;
     layer.silverGlass = false;
+    layer.isStarter = false;
     el.symbolGradientToggle.checked = false;
     renderAll();
   });
+  el.symbolColorInput.addEventListener('change', pushHistory);
 
   el.symbolGradientToggle.addEventListener('change', (e) => {
     const layer = getSelectedLayer();
     if (!layer) return;
     layer.silverGlass = e.target.checked;
+    layer.isStarter = false;
     pushHistory();
     renderAll();
   });
@@ -1898,6 +2047,7 @@ function bindEvents() {
     syncLayersUI();
     renderAll();
   });
+  el.textContentInput.addEventListener('change', pushHistory);
 
   el.textColorInput.addEventListener('input', (e) => {
     const layer = getSelectedLayer();
@@ -1905,6 +2055,7 @@ function bindEvents() {
     layer.color = e.target.value;
     renderAll();
   });
+  el.textColorInput.addEventListener('change', pushHistory);
 
   el.textWeightSelect.addEventListener('change', (e) => {
     const layer = getSelectedLayer();
@@ -1919,6 +2070,7 @@ function bindEvents() {
     const layer = getSelectedLayer();
     if (!layer) return;
     layer.scale = Number(e.target.value) / 100;
+    layer.isStarter = false;
     el.layerScaleVal.textContent = `${e.target.value}%`;
     renderAll();
   });
@@ -1928,6 +2080,7 @@ function bindEvents() {
     const layer = getSelectedLayer();
     if (!layer) return;
     layer.rotation = Number(e.target.value);
+    layer.isStarter = false;
     el.layerRotVal.textContent = `${e.target.value}°`;
     renderAll();
   });
@@ -1937,6 +2090,7 @@ function bindEvents() {
     const layer = getSelectedLayer();
     if (!layer) return;
     layer.opacity = Number(e.target.value) / 100;
+    layer.isStarter = false;
     el.layerOpacityVal.textContent = `${e.target.value}%`;
     renderAll();
   });
@@ -1946,6 +2100,7 @@ function bindEvents() {
     const layer = getSelectedLayer();
     if (!layer) return;
     layer.cornerRadius = Number(e.target.value);
+    layer.isStarter = false;
     el.layerRadiusVal.textContent = `${e.target.value}%`;
     renderAll();
   });
@@ -1955,6 +2110,7 @@ function bindEvents() {
     const layer = getSelectedLayer();
     if (!layer) return;
     layer.flipX = !layer.flipX;
+    layer.isStarter = false;
     pushHistory();
     renderAll();
   });
@@ -1963,6 +2119,7 @@ function bindEvents() {
     const layer = getSelectedLayer();
     if (!layer) return;
     layer.flipY = !layer.flipY;
+    layer.isStarter = false;
     pushHistory();
     renderAll();
   });
@@ -2035,7 +2192,6 @@ function bindEvents() {
   el.reverseStopsBtn.addEventListener('click', () => {
     const colors = state.background.stops.map((s) => s.color).reverse();
     state.background.stops.forEach((s, i) => (s.color = colors[i]));
-    state.background.meshOrbs = null;
     pushHistory();
     renderStopsList();
     renderAll();
@@ -2065,7 +2221,6 @@ function bindEvents() {
     }
     const last = state.background.stops[state.background.stops.length - 1];
     state.background.stops.push({ color: last?.color || '#7c3aed', pos: 100 });
-    state.background.meshOrbs = null;
     pushHistory();
     renderStopsList();
     renderAll();

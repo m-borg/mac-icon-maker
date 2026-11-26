@@ -363,9 +363,15 @@ html, body {
   padding: 3px 8px;
   border-radius: 6px;
   cursor: pointer;
+  white-space: nowrap;
 }
 .mini-pill:hover {
   background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+.mini-pill.active {
+  background: rgba(59, 158, 255, 0.24);
+  border-color: rgba(59, 158, 255, 0.6);
   color: #fff;
 }
 
